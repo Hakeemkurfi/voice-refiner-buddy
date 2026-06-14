@@ -14,15 +14,17 @@ export const Route = createFileRoute("/api/public/event")({
       OPTIONS: async () => new Response(null, { status: 204, headers: CORS }),
       POST: async ({ request }) => {
         try {
-          const expected = process.env.DEVICE_SECRET ?? "change-me-esp32";
-          const got =
-            request.headers.get("x-device-secret") ??
-            new URL(request.url).searchParams.get("secret");
-          if (got !== expected) {
-            return new Response(JSON.stringify({ error: "bad secret" }), {
-              status: 401,
-              headers: { "Content-Type": "application/json", ...CORS },
-            });
+          const expected = process.env.DEVICE_SECRET;
+          if (expected && expected.length > 0) {
+            const got =
+              request.headers.get("x-device-secret") ??
+              new URL(request.url).searchParams.get("secret");
+            if (got !== expected) {
+              return new Response(JSON.stringify({ error: "bad secret" }), {
+                status: 401,
+                headers: { "Content-Type": "application/json", ...CORS },
+              });
+            }
           }
 
           const ctype = request.headers.get("content-type") ?? "";

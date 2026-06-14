@@ -48,6 +48,7 @@ function Index() {
   const [lastImage, setLastImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [log, setLog] = useState<{ t: string; type: string; id: string }[]>([]);
   const seenRef = useRef<Set<string>>(new Set());
 
   const handleCapture = async (image_b64: string) => {
@@ -74,6 +75,7 @@ function Index() {
           const row = payload.new as EventRow;
           if (seenRef.current.has(row.id)) return;
           seenRef.current.add(row.id);
+          setLog((l) => [{ t: new Date().toLocaleTimeString(), type: row.type, id: row.id.slice(0, 8) }, ...l].slice(0, 20));
           switch (row.type) {
             case "capture":
               if (row.image_b64) handleCapture(row.image_b64);
@@ -235,6 +237,26 @@ function Index() {
             </ol>
           </Card>
         )}
+
+        <Card className="p-4">
+          <h2 className="font-semibold mb-2 text-sm">Event log (live from ESP32)</h2>
+          {log.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No events yet. Press CAPTURE on the ESP32 (or type <code>cap</code> in Serial Monitor).
+              Every hit will appear here within ~1 second.
+            </p>
+          ) : (
+            <ul className="text-xs font-mono space-y-1 max-h-48 overflow-auto">
+              {log.map((e) => (
+                <li key={e.id} className="flex gap-3">
+                  <span className="text-muted-foreground">{e.t}</span>
+                  <Badge variant="outline" className="text-[10px] py-0">{e.type}</Badge>
+                  <span className="text-muted-foreground">{e.id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
 
         {tts.items.length > 1 && (
           <Card className="p-4">

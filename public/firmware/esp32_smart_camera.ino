@@ -31,11 +31,10 @@
 // ====== EDIT THESE ======
 const char* WIFI_SSID     = "Hakeem";
 const char* WIFI_PASS     = "10000000";
-// Use the PUBLISHED Lovable URL, host only (no https://, no trailing slash).
-// You'll get this after you click "Publish" in Lovable.
-const char* SERVER_HOST   = "your-project.lovable.app";
+// Your PUBLISHED Lovable host — host only, no https://, no trailing slash.
+const char* SERVER_HOST   = "voice-refiner-buddy.lovable.app";
 const char* SERVER_PATH   = "/api/public/event";
-const char* DEVICE_SECRET = "";              // leave "" if you didn't set DEVICE_SECRET in the app
+const char* DEVICE_SECRET = "";              // endpoint is open right now — leave ""
 const char* DEVICE_ID     = "esp32-cam-01";
 // ========================
 
@@ -112,30 +111,41 @@ void connectWifi() {
 }
 
 bool postJpeg(uint8_t* buf, size_t len) {
-  WiFiClientSecure client; client.setInsecure();
+  WiFiClientSecure client;
+  client.setInsecure();          // skip cert validation (saves RAM)
+  client.setTimeout(15000);      // 15s TLS timeout — Lovable edge can be slow on cold start
   HTTPClient http;
+  http.setReuse(false);
+  http.setTimeout(20000);
   String url = String("https://") + SERVER_HOST + SERVER_PATH + "?type=capture";
-  if (!http.begin(client, url)) return false;
+  Serial.printf("POST %s  (%u bytes)\n", url.c_str(), (unsigned)len);
+  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
   http.addHeader("Content-Type", "image/jpeg");
   if (strlen(DEVICE_SECRET) > 0) http.addHeader("X-Device-Secret", DEVICE_SECRET);
   http.addHeader("X-Device-Id", DEVICE_ID);
   int code = http.POST(buf, len);
-  Serial.printf("POST jpeg (%u bytes) -> %d\n", (unsigned)len, code);
+  String resp = (code > 0) ? http.getString() : http.errorToString(code);
+  Serial.printf("  -> HTTP %d  %s\n", code, resp.c_str());
   http.end();
   return code >= 200 && code < 300;
 }
 
 bool postCommand(const char* type) {
-  WiFiClientSecure client; client.setInsecure();
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(15000);
   HTTPClient http;
+  http.setReuse(false);
+  http.setTimeout(20000);
   String url = String("https://") + SERVER_HOST + SERVER_PATH;
-  if (!http.begin(client, url)) return false;
+  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
   http.addHeader("Content-Type", "application/json");
   if (strlen(DEVICE_SECRET) > 0) http.addHeader("X-Device-Secret", DEVICE_SECRET);
   http.addHeader("X-Device-Id", DEVICE_ID);
   String body = String("{\"type\":\"") + type + "\",\"device_id\":\"" + DEVICE_ID + "\"}";
   int code = http.POST(body);
-  Serial.printf("POST %s -> %d\n", type, code);
+  String resp = (code > 0) ? http.getString() : http.errorToString(code);
+  Serial.printf("POST %s -> HTTP %d  %s\n", type, code, resp.c_str());
   http.end();
   return code >= 200 && code < 300;
 }
@@ -175,12 +185,31 @@ void setup() {
 
   if (!initCamera()) { Serial.println("Halting."); while (true) delay(1000); }
   connectWifi();
-  Serial.println("Ready. Press the CAPTURE button.");
+  Serial.println("Ready. Press CAPTURE, or type 'cap' / 'next' / 'prev' in Serial Monitor.");
+}
+
+void handleSerial() {
+  static String line;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      line.trim();
+      if (line.equalsIgnoreCase("cap"))       { Serial.println("[serial] cap");  captureAndSend(); Serial.println("✓ Capture executed"); }
+      else if (line.equalsIgnoreCase("next")) { Serial.println("[serial] next"); postCommand("next"); }
+      else if (line.equalsIgnoreCase("prev")) { Serial.println("[serial] prev"); postCommand("prev"); }
+      else if (line.length() > 0)             { Serial.printf("[serial] unknown: %s\n", line.c_str()); }
+      line = "";
+    } else if (line.length() < 32) {
+      line += c;
+    }
+  }
 }
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) { connectWifi(); delay(500); return; }
-  if (pressed(CAPTURE_BTN, &capState,  &capT))  captureAndSend();
+  handleSerial();
+  if (pressed(CAPTURE_BTN, &capState,  &capT))  { captureAndSend(); Serial.println("✓ Capture executed"); }
   if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");
   if (pressed(PREV_BTN,    &prevState, &prevT)) postCommand("prev");
   delay(10);

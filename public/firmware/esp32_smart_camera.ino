@@ -31,11 +31,10 @@
 // ====== EDIT THESE ======
 const char* WIFI_SSID     = "Hakeem";
 const char* WIFI_PASS     = "10000000";
-// Use the PUBLISHED Lovable URL, host only (no https://, no trailing slash).
-// You'll get this after you click "Publish" in Lovable.
-const char* SERVER_HOST   = "your-project.lovable.app";
+// Your PUBLISHED Lovable host — host only, no https://, no trailing slash.
+const char* SERVER_HOST   = "voice-refiner-buddy.lovable.app";
 const char* SERVER_PATH   = "/api/public/event";
-const char* DEVICE_SECRET = "";              // leave "" if you didn't set DEVICE_SECRET in the app
+const char* DEVICE_SECRET = "";              // endpoint is open right now — leave ""
 const char* DEVICE_ID     = "esp32-cam-01";
 // ========================
 

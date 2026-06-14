@@ -111,30 +111,41 @@ void connectWifi() {
 }
 
 bool postJpeg(uint8_t* buf, size_t len) {
-  WiFiClientSecure client; client.setInsecure();
+  WiFiClientSecure client;
+  client.setInsecure();          // skip cert validation (saves RAM)
+  client.setTimeout(15000);      // 15s TLS timeout — Lovable edge can be slow on cold start
   HTTPClient http;
+  http.setReuse(false);
+  http.setTimeout(20000);
   String url = String("https://") + SERVER_HOST + SERVER_PATH + "?type=capture";
-  if (!http.begin(client, url)) return false;
+  Serial.printf("POST %s  (%u bytes)\n", url.c_str(), (unsigned)len);
+  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
   http.addHeader("Content-Type", "image/jpeg");
   if (strlen(DEVICE_SECRET) > 0) http.addHeader("X-Device-Secret", DEVICE_SECRET);
   http.addHeader("X-Device-Id", DEVICE_ID);
   int code = http.POST(buf, len);
-  Serial.printf("POST jpeg (%u bytes) -> %d\n", (unsigned)len, code);
+  String resp = (code > 0) ? http.getString() : http.errorToString(code);
+  Serial.printf("  -> HTTP %d  %s\n", code, resp.c_str());
   http.end();
   return code >= 200 && code < 300;
 }
 
 bool postCommand(const char* type) {
-  WiFiClientSecure client; client.setInsecure();
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(15000);
   HTTPClient http;
+  http.setReuse(false);
+  http.setTimeout(20000);
   String url = String("https://") + SERVER_HOST + SERVER_PATH;
-  if (!http.begin(client, url)) return false;
+  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
   http.addHeader("Content-Type", "application/json");
   if (strlen(DEVICE_SECRET) > 0) http.addHeader("X-Device-Secret", DEVICE_SECRET);
   http.addHeader("X-Device-Id", DEVICE_ID);
   String body = String("{\"type\":\"") + type + "\",\"device_id\":\"" + DEVICE_ID + "\"}";
   int code = http.POST(body);
-  Serial.printf("POST %s -> %d\n", type, code);
+  String resp = (code > 0) ? http.getString() : http.errorToString(code);
+  Serial.printf("POST %s -> HTTP %d  %s\n", type, code, resp.c_str());
   http.end();
   return code >= 200 && code < 300;
 }

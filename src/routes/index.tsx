@@ -48,6 +48,7 @@ function Index() {
   const [lastImage, setLastImage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const [log, setLog] = useState<{ t: string; type: string; id: string }[]>([]);
   const seenRef = useRef<Set<string>>(new Set());
 
   const handleCapture = async (image_b64: string) => {

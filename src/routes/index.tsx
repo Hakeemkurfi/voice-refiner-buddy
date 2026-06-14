@@ -75,6 +75,7 @@ function Index() {
           const row = payload.new as EventRow;
           if (seenRef.current.has(row.id)) return;
           seenRef.current.add(row.id);
+          setLog((l) => [{ t: new Date().toLocaleTimeString(), type: row.type, id: row.id.slice(0, 8) }, ...l].slice(0, 20));
           switch (row.type) {
             case "capture":
               if (row.image_b64) handleCapture(row.image_b64);

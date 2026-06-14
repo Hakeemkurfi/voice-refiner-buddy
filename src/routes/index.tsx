@@ -238,6 +238,26 @@ function Index() {
           </Card>
         )}
 
+        <Card className="p-4">
+          <h2 className="font-semibold mb-2 text-sm">Event log (live from ESP32)</h2>
+          {log.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              No events yet. Press CAPTURE on the ESP32 (or type <code>cap</code> in Serial Monitor).
+              Every hit will appear here within ~1 second.
+            </p>
+          ) : (
+            <ul className="text-xs font-mono space-y-1 max-h-48 overflow-auto">
+              {log.map((e) => (
+                <li key={e.id} className="flex gap-3">
+                  <span className="text-muted-foreground">{e.t}</span>
+                  <Badge variant="outline" className="text-[10px] py-0">{e.type}</Badge>
+                  <span className="text-muted-foreground">{e.id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+
         {tts.items.length > 1 && (
           <Card className="p-4">
             <h2 className="font-semibold mb-3">History</h2>

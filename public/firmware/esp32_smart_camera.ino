@@ -185,12 +185,31 @@ void setup() {
 
   if (!initCamera()) { Serial.println("Halting."); while (true) delay(1000); }
   connectWifi();
-  Serial.println("Ready. Press the CAPTURE button.");
+  Serial.println("Ready. Press CAPTURE, or type 'cap' / 'next' / 'prev' in Serial Monitor.");
+}
+
+void handleSerial() {
+  static String line;
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      line.trim();
+      if (line.equalsIgnoreCase("cap"))       { Serial.println("[serial] cap");  captureAndSend(); Serial.println("✓ Capture executed"); }
+      else if (line.equalsIgnoreCase("next")) { Serial.println("[serial] next"); postCommand("next"); }
+      else if (line.equalsIgnoreCase("prev")) { Serial.println("[serial] prev"); postCommand("prev"); }
+      else if (line.length() > 0)             { Serial.printf("[serial] unknown: %s\n", line.c_str()); }
+      line = "";
+    } else if (line.length() < 32) {
+      line += c;
+    }
+  }
 }
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) { connectWifi(); delay(500); return; }
-  if (pressed(CAPTURE_BTN, &capState,  &capT))  captureAndSend();
+  handleSerial();
+  if (pressed(CAPTURE_BTN, &capState,  &capT))  { captureAndSend(); Serial.println("✓ Capture executed"); }
   if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");
   if (pressed(PREV_BTN,    &prevState, &prevT)) postCommand("prev");
   delay(10);

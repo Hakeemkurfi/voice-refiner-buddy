@@ -1,7 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-const Input = z.object({ image_b64: z.string().min(100) });
+const Input = z.object({
+  image_b64: z.string().min(100),
+  contextText: z.string().max(12000).optional(),
+});
 
 export const analyzeImage = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => Input.parse(input))
@@ -12,6 +15,8 @@ export const analyzeImage = createServerFn({ method: "POST" })
     const systemPrompt = `You are a patient tutor for math, physics, chemistry, and reading.
 Look at the photo. If it shows an equation or problem, solve it step by step.
 If it shows a paragraph or notes, read and explain the key ideas step by step.
+If the image is blurry, dark, cropped, or not readable, still return JSON that says the picture arrived but is unclear, then give simple steps for retaking it.
+If class notes or textbook guidance is provided, use it as the preferred method and explain the answer in that style.
 
 Return ONLY JSON in this exact shape:
 {"title":"short title (max 8 words)","summary":"one sentence","steps":["sentence 1","sentence 2", ...]}
@@ -29,7 +34,10 @@ Rules for steps:
         {
           role: "user",
           content: [
-            { type: "text", text: "Solve or explain what is in this image." },
+            {
+              type: "text",
+              text: `Solve or explain what is in this image.${data.contextText?.trim() ? `\n\nClass material or solution guide to follow:\n${data.contextText.trim()}` : ""}`,
+            },
             {
               type: "image_url",
               image_url: {

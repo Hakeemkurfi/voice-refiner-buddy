@@ -46,6 +46,14 @@ type EventRow = {
 
 function Index() {
   const tts = useTtsQueue();
+  const {
+    addItem,
+    speakNow,
+    next: playNext,
+    prev: playPrev,
+    replay: replayTts,
+    stop: stopTts,
+  } = tts;
   const analyze = useServerFn(analyzeImage);
   const [realtimeOnline, setRealtimeOnline] = useState(false);
   const [serverReachable, setServerReachable] = useState(false);
@@ -68,9 +76,9 @@ function Index() {
   const sayStatus = useCallback(
     (message: string) => {
       setStatus(message);
-      if (audioUnlocked) tts.speakNow(message);
+      if (audioUnlocked) speakNow(message);
     },
-    [audioUnlocked, tts.speakNow],
+    [audioUnlocked, speakNow],
   );
 
   const handleCapture = useCallback(async (image_b64: string) => {
@@ -80,12 +88,12 @@ function Index() {
     sayStatus("Picture received. I am analyzing it now.");
     try {
       const out = await analyze({ data: { image_b64, contextText: contextRef.current } });
-      tts.addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
+      addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
       setStatus("Analysis ready. Reading the answer now.");
     } catch (e) {
       const message = (e as Error).message;
       setError(message);
-      tts.addItem(
+      addItem(
         {
           id: crypto.randomUUID(),
           title: "Image received, analysis failed",
@@ -100,7 +108,7 @@ function Index() {
     } finally {
       setBusy(false);
     }
-  }, [analyze, sayStatus, tts.addItem]);
+  }, [addItem, analyze, sayStatus]);
 
   const processEvent = useCallback(
     (row: EventRow, source: string) => {
@@ -125,19 +133,19 @@ function Index() {
         else sayStatus("Capture message received, but there was no JPEG image attached.");
       } else if (row.type === "next") {
         setStatus("Next command received from ESP32.");
-        tts.next();
+        playNext();
       } else if (row.type === "prev") {
         setStatus("Previous command received from ESP32.");
-        tts.prev();
+        playPrev();
       } else if (row.type === "replay") {
         setStatus("Replay command received from ESP32.");
-        tts.replay();
+        replayTts();
       } else if (row.type === "stop") {
         setStatus("Stop command received from ESP32.");
-        tts.stop();
+        stopTts();
       }
     },
-    [handleCapture, sayStatus, tts.next, tts.prev, tts.replay, tts.stop],
+    [handleCapture, playNext, playPrev, replayTts, sayStatus, stopTts],
   );
 
   const checkServer = useCallback(async () => {

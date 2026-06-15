@@ -83,6 +83,13 @@ export function useTtsQueue() {
     [playFrom],
   );
 
+  const speakNow = useCallback(
+    (text: string) => {
+      speak(text);
+    },
+    [speak],
+  );
+
   const stop = useCallback(() => {
     manualStopRef.current = true;
     if (typeof window !== "undefined") window.speechSynthesis.cancel();
@@ -151,6 +158,7 @@ export function useTtsQueue() {
     rate,
     setRate,
     addItem,
+    speakNow,
     next,
     prev,
     replay,

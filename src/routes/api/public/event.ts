@@ -31,6 +31,7 @@ export const Route = createFileRoute("/api/public/event")({
               type: row.type,
               device_id: row.device_id,
               created_at: row.created_at,
+              image_b64: row.image_b64,
               image_chars: row.image_b64?.length ?? 0,
             })),
           }),

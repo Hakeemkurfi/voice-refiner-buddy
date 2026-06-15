@@ -150,13 +150,33 @@ bool postCommand(const char* type) {
   return code >= 200 && code < 300;
 }
 
-void captureAndSend() {
+bool checkServer() {
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(15000);
+  HTTPClient http;
+  http.setReuse(false);
+  http.setTimeout(20000);
+  String url = String("https://") + SERVER_HOST + SERVER_PATH;
+  Serial.printf("GET %s\n", url.c_str());
+  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
+  int code = http.GET();
+  String resp = (code > 0) ? http.getString() : http.errorToString(code);
+  Serial.printf("  -> HTTP %d  %s\n", code, resp.c_str());
+  http.end();
+  return code >= 200 && code < 300;
+}
+
+bool captureAndSend() {
   // throw away one stale frame so we get a fresh exposure
   camera_fb_t* fb = esp_camera_fb_get(); if (fb) esp_camera_fb_return(fb);
   fb = esp_camera_fb_get();
-  if (!fb) { Serial.println("camera capture failed"); return; }
-  postJpeg(fb->buf, fb->len);
+  if (!fb) { Serial.println("camera capture failed"); return false; }
+  bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
+  Serial.printf("Camera captured: %u bytes, JPEG marker: %s\n", (unsigned)fb->len, jpeg ? "yes" : "NO");
+  bool ok = jpeg && postJpeg(fb->buf, fb->len);
   esp_camera_fb_return(fb);
+  return ok;
 }
 
 // Debounced edge detect — fires once when the button transitions to pressed (LOW).
@@ -185,7 +205,7 @@ void setup() {
 
   if (!initCamera()) { Serial.println("Halting."); while (true) delay(1000); }
   connectWifi();
-  Serial.println("Ready. Press CAPTURE, or type 'cap' / 'next' / 'prev' in Serial Monitor.");
+  Serial.println("Ready. Type 'ping' to test server, or 'cap' / 'next' / 'prev' in Serial Monitor.");
 }
 
 void handleSerial() {
@@ -195,7 +215,8 @@ void handleSerial() {
     if (c == '\r') continue;
     if (c == '\n') {
       line.trim();
-      if (line.equalsIgnoreCase("cap"))       { Serial.println("[serial] cap");  captureAndSend(); Serial.println("✓ Capture executed"); }
+      if (line.equalsIgnoreCase("ping"))      { Serial.println("[serial] ping"); checkServer(); }
+      else if (line.equalsIgnoreCase("cap"))  { Serial.println("[serial] cap");  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above"); }
       else if (line.equalsIgnoreCase("next")) { Serial.println("[serial] next"); postCommand("next"); }
       else if (line.equalsIgnoreCase("prev")) { Serial.println("[serial] prev"); postCommand("prev"); }
       else if (line.length() > 0)             { Serial.printf("[serial] unknown: %s\n", line.c_str()); }
@@ -209,7 +230,7 @@ void handleSerial() {
 void loop() {
   if (WiFi.status() != WL_CONNECTED) { connectWifi(); delay(500); return; }
   handleSerial();
-  if (pressed(CAPTURE_BTN, &capState,  &capT))  { captureAndSend(); Serial.println("✓ Capture executed"); }
+  if (pressed(CAPTURE_BTN, &capState,  &capT))  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above");
   if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");
   if (pressed(PREV_BTN,    &prevState, &prevT)) postCommand("prev");
   delay(10);

@@ -416,12 +416,18 @@ function Index() {
           <h2 className="font-semibold text-sm mb-2">Setup</h2>
           <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-5">
             <li>
+              The backend is confirmed working: it accepted a JPEG test upload. Your current failure is the ESP32 HTTPS send step.
+            </li>
+            <li>
               Point your ESP32 firmware at the published URL +{" "}
               <code className="bg-background px-1 rounded">/api/public/event</code>.
             </li>
             <li>
+              After flashing, open the Serial Monitor IP address like <code className="bg-background px-1 rounded">http://192.168.x.x/</code> to preview the camera and press Capture from the board dashboard.
+            </li>
+            <li>
               For Serial Monitor testing, type <code className="bg-background px-1 rounded">cap</code> and wait for
-              <code className="bg-background px-1 rounded ml-1">HTTP 200</code>. If it says HTTP -1, the board did not reach the server.
+              <code className="bg-background px-1 rounded ml-1">HTTP 200</code>. If it says HTTP -3, the board camera worked but the upload failed before reaching the app.
             </li>
             <li>
               Open this page on your phone, tap <b>Enable audio</b>, connect your earbuds, then lock

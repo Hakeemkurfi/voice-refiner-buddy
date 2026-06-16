@@ -59,6 +59,8 @@ function Index() {
   const [serverReachable, setServerReachable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lastImage, setLastImage] = useState<string | null>(null);
+  const [extracted, setExtracted] = useState<string>("");
+  const [usedModel, setUsedModel] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [status, setStatus] = useState("Checking the bridge between ESP32 and the app...");
@@ -81,14 +83,17 @@ function Index() {
     [audioUnlocked, speakNow],
   );
 
-  const handleCapture = useCallback(async (image_b64: string) => {
+  const handleCapture = useCallback(async (image_b64: string, model: "flash" | "pro" = "flash") => {
     setBusy(true);
     setError(null);
     setLastImage(image_b64);
-    sayStatus("Picture received. I am analyzing it now.");
+    setExtracted("");
+    sayStatus(model === "pro" ? "Re-analyzing with the stronger model." : "Picture received. I am analyzing it now.");
     try {
-      const out = await analyze({ data: { image_b64, contextText: contextRef.current } });
+      const out = await analyze({ data: { image_b64, contextText: contextRef.current, model } });
       addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
+      setExtracted(out.extractedText ?? "");
+      setUsedModel(out.modelUsed ?? "");
       setStatus("Analysis ready. Reading the answer now.");
     } catch (e) {
       const message = (e as Error).message;

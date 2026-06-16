@@ -317,9 +317,14 @@ bool checkServer() {
 }
 
 bool captureAndSend() {
-  // throw away one stale frame so we get a fresh exposure
-  camera_fb_t* fb = esp_camera_fb_get(); if (fb) esp_camera_fb_return(fb);
-  fb = esp_camera_fb_get();
+  // Discard several frames so AEC / AWB / AGC fully converge on the paper.
+  // The first frame after idle is almost always under/over-exposed.
+  for (int i = 0; i < 4; i++) {
+    camera_fb_t* warm = esp_camera_fb_get();
+    if (warm) esp_camera_fb_return(warm);
+    delay(120);
+  }
+  camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { Serial.println("camera capture failed"); return false; }
   bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
   Serial.printf("Camera captured: %u bytes, JPEG marker: %s\n", (unsigned)fb->len, jpeg ? "yes" : "NO");

@@ -95,51 +95,55 @@ bool initCamera() {
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  // OV3660 native is 2048x1536. UXGA (1600x1200) gives sharp, readable text
-  // on a printed page while staying within PSRAM + upload budget.
+  // OV3660 native is 2048x1536. UXGA (1600x1200) for sharp text on paper.
   config.frame_size   = FRAMESIZE_UXGA;
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 10;                     // lower number = better quality (8-12 good for text)
+  config.jpeg_quality = 8;                      // 8 = high quality, sharp edges
   config.fb_count     = 2;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) { Serial.printf("Camera init failed: 0x%x\n", err); return false; }
 
-  // ---- Tune sensor for DOCUMENT / PAPER capture (OV3660) ----
-  // Goal: sharp, high-contrast text under typical room light. We let auto
-  // exposure + auto white balance + auto gain do the work, then raise the
-  // gain ceiling and sharpness so printed characters stay crisp.
+  // ---- NASA-grade tuning for DOCUMENT / PAPER capture (OV3660) ----
+  // Strategy: bias bright + low noise + max sharpness. Most OV cameras
+  // under-expose paper because the white background fools the metering;
+  // we push ae_level +2 and clamp the gain ceiling DOWN (not up) so we
+  // get a slower, cleaner shutter instead of a noisy high-ISO grey frame.
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
     s->set_framesize(s, FRAMESIZE_UXGA);
-    s->set_quality(s, 10);
+    s->set_quality(s, 8);
 
-    // White balance / exposure / gain — fully automatic
-    s->set_whitebal(s, 1);       // AWB on
-    s->set_awb_gain(s, 1);       // AWB gain on
-    s->set_wb_mode(s, 0);        // 0 = auto
-    s->set_exposure_ctrl(s, 1);  // AEC on
-    s->set_aec2(s, 1);           // AEC DSP on (better in low light)
-    s->set_ae_level(s, 1);       // +1 brighter — paper usually reads dark
-    s->set_aec_value(s, 600);    // baseline exposure (overridden by AEC)
-    s->set_gain_ctrl(s, 1);      // AGC on
+    // White balance — Sunny preset removes the warm/ash cast under LED bulbs
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_wb_mode(s, 1);        // 1 = Sunny (whites stay white on paper)
+
+    // Exposure — auto, biased bright
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_ae_level(s, 2);       // +2 brightest
+    s->set_aec_value(s, 800);
+
+    // Gain — clamp LOW. High gain = grey noisy mush that destroys text.
+    s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
-    s->set_gainceiling(s, (gainceiling_t)4);  // up to 32x in low light
+    s->set_gainceiling(s, (gainceiling_t)2);   // cap at 8x, not 32x
 
-    // Image quality knobs that matter for text
-    s->set_brightness(s, 1);     // +1
-    s->set_contrast(s, 2);       // +2 — crisper black/white edges
-    s->set_saturation(s, -2);    // colour doesn't help text; reduce noise
-    s->set_sharpness(s, 2);      // +2 — sharper character edges
+    // Maximum contrast + sharpness for printed characters
+    s->set_brightness(s, 1);
+    s->set_contrast(s, 2);
+    s->set_saturation(s, -2);
+    s->set_sharpness(s, 3);      // +3 — crispest character edges
     s->set_denoise(s, 1);
 
     // Geometry / lens corrections
-    s->set_lenc(s, 1);           // lens correction on
-    s->set_bpc(s, 1);            // bad pixel correction
-    s->set_wpc(s, 1);            // white pixel correction
-    s->set_raw_gma(s, 1);        // gamma on
+    s->set_lenc(s, 1);
+    s->set_bpc(s, 1);
+    s->set_wpc(s, 1);
+    s->set_raw_gma(s, 1);
     s->set_hmirror(s, 0);
     s->set_vflip(s, 0);
     s->set_colorbar(s, 0);
@@ -317,19 +321,38 @@ bool checkServer() {
 }
 
 bool captureAndSend() {
-  // Discard several frames so AEC / AWB / AGC fully converge on the paper.
-  // The first frame after idle is almost always under/over-exposed.
-  for (int i = 0; i < 4; i++) {
+  // === BURST + PICK SHARPEST ===
+  // 1) Warm the sensor so AEC / AWB / AGC converge on the paper.
+  for (int i = 0; i < 5; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
-    delay(120);
+    delay(140);
   }
-  camera_fb_t* fb = esp_camera_fb_get();
-  if (!fb) { Serial.println("camera capture failed"); return false; }
-  bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
-  Serial.printf("Camera captured: %u bytes, JPEG marker: %s\n", (unsigned)fb->len, jpeg ? "yes" : "NO");
-  bool ok = jpeg && postJpeg(fb->buf, fb->len);
-  esp_camera_fb_return(fb);
+  // 2) Take a burst of 5 frames. For a fixed scene at fixed JPEG quality
+  //    the encoder produces a LARGER file when there is MORE edge / high-
+  //    frequency detail — i.e. when the frame is sharper. Pick the biggest
+  //    as our best shot and discard the rest. Same trick pro doc-scanner
+  //    apps use when they don't have a Laplacian variance kernel.
+  camera_fb_t* bestFb = nullptr;
+  size_t bestLen = 0;
+  for (int i = 0; i < 5; i++) {
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) continue;
+    bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
+    Serial.printf("  burst[%d]: %u bytes, jpeg=%s\n", i, (unsigned)fb->len, jpeg ? "y" : "n");
+    if (jpeg && fb->len > bestLen) {
+      if (bestFb) esp_camera_fb_return(bestFb);
+      bestFb = fb;
+      bestLen = fb->len;
+    } else {
+      esp_camera_fb_return(fb);
+    }
+    delay(80);
+  }
+  if (!bestFb) { Serial.println("camera capture failed (no usable frame in burst)"); return false; }
+  Serial.printf("Sharpest of burst: %u bytes (larger = sharper)\n", (unsigned)bestLen);
+  bool ok = postJpeg(bestFb->buf, bestFb->len);
+  esp_camera_fb_return(bestFb);
   return ok;
 }
 

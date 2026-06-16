@@ -59,6 +59,8 @@ function Index() {
   const [serverReachable, setServerReachable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lastImage, setLastImage] = useState<string | null>(null);
+  const [extracted, setExtracted] = useState<string>("");
+  const [usedModel, setUsedModel] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const [status, setStatus] = useState("Checking the bridge between ESP32 and the app...");
@@ -81,14 +83,17 @@ function Index() {
     [audioUnlocked, speakNow],
   );
 
-  const handleCapture = useCallback(async (image_b64: string) => {
+  const handleCapture = useCallback(async (image_b64: string, model: "flash" | "pro" = "flash") => {
     setBusy(true);
     setError(null);
     setLastImage(image_b64);
-    sayStatus("Picture received. I am analyzing it now.");
+    setExtracted("");
+    sayStatus(model === "pro" ? "Re-analyzing with the stronger model." : "Picture received. I am analyzing it now.");
     try {
-      const out = await analyze({ data: { image_b64, contextText: contextRef.current } });
+      const out = await analyze({ data: { image_b64, contextText: contextRef.current, model } });
       addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
+      setExtracted(out.extractedText ?? "");
+      setUsedModel(out.modelUsed ?? "");
       setStatus("Analysis ready. Reading the answer now.");
     } catch (e) {
       const message = (e as Error).message;
@@ -290,23 +295,47 @@ function Index() {
         </Card>
 
         <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="relative w-24 h-24 rounded-lg overflow-hidden bg-muted flex items-center justify-center shrink-0">
-              {lastImage ? (
+          {lastImage ? (
+            <div className="mb-3">
+              <a
+                href={`data:image/jpeg;base64,${lastImage}`}
+                target="_blank"
+                rel="noreferrer"
+                className="block relative rounded-lg overflow-hidden bg-muted border"
+              >
                 <img
                   src={`data:image/jpeg;base64,${lastImage}`}
-                  alt="Last capture"
-                  className="w-full h-full object-cover"
+                  alt="What the AI sees"
+                  className="w-full max-h-96 object-contain bg-black/5"
                 />
-              ) : (
-                <Camera className="h-8 w-8 text-muted-foreground" />
-              )}
-              {busy && (
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                  <Loader2 className="h-6 w-6 text-white animate-spin" />
-                </div>
-              )}
+                {busy && (
+                  <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 text-white animate-spin" />
+                  </div>
+                )}
+              </a>
+              <div className="flex flex-wrap items-center justify-between gap-2 mt-2 text-xs text-muted-foreground">
+                <span>
+                  ~{Math.round((lastImage.length * 3) / 4 / 1024)} KB jpeg • tap image to open full size
+                  {usedModel && <span className="ml-1">• {usedModel.replace("google/", "")}</span>}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => handleCapture(lastImage, "pro")}
+                >
+                  Re-analyze with Pro (stronger OCR)
+                </Button>
+              </div>
             </div>
+          ) : (
+            <div className="mb-3 h-40 rounded-lg bg-muted border flex items-center justify-center text-muted-foreground">
+              <Camera className="h-8 w-8 mr-2" /> Waiting for first capture…
+            </div>
+          )}
+
+          <div className="flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-xs uppercase text-muted-foreground tracking-wide">
                 {busy ? "Analyzing image" : currentItem ? "Now reading" : "Waiting for capture"}
@@ -351,6 +380,16 @@ function Index() {
 
           {error && <p className="text-sm text-destructive mt-3">{error}</p>}
         </Card>
+
+        {extracted && (
+          <Card className="p-4">
+            <h2 className="font-semibold mb-2 text-sm">Text the AI read from the page</h2>
+            <pre className="text-xs whitespace-pre-wrap bg-muted/40 rounded p-2 max-h-48 overflow-auto">{extracted}</pre>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              If this looks wrong or empty, the camera frame is too blurry/dark. Move closer (15–25 cm), add light, retake.
+            </p>
+          </Card>
+        )}
 
         {currentItem && (
           <Card className="p-4">

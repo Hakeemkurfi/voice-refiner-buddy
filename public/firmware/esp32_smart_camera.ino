@@ -27,6 +27,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <WebServer.h>
 
 // ====== EDIT THESE ======
 const char* WIFI_SSID     = "Hakeem";
@@ -48,6 +49,8 @@ const char* DEVICE_ID     = "esp32-cam-01";
 #define CAPTURE_BTN 1
 #define NEXT_BTN    2
 #define PREV_BTN    3
+
+WebServer localServer(80);
 
 // ----- Camera pin map (copied verbatim from your camera_pins.h, ESP32S3_WROOM_CAM)
 #define PWDN_GPIO_NUM     -1
@@ -112,6 +115,50 @@ void connectWifi() {
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) { delay(400); Serial.print("."); }
   if (WiFi.status() == WL_CONNECTED) Serial.printf("\nIP: %s\n", WiFi.localIP().toString().c_str());
   else Serial.println("\nWiFi FAILED — will retry in loop()");
+}
+
+void handleLocalRoot() {
+  String page = "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>";
+  page += "<title>ESP32 Smart Audio Tutor</title><body style='font-family:Arial,sans-serif;margin:20px;line-height:1.4'>";
+  page += "<h2>ESP32 Smart Audio Tutor</h2>";
+  page += "<p>If this preview image appears, the camera is working locally.</p>";
+  page += "<img src='/jpg?ts=" + String(millis()) + "' style='width:100%;max-width:640px;border:1px solid #ccc'>";
+  page += "<p><a href='/capture'><button style='font-size:18px;padding:12px 18px'>Capture and send to app</button></a></p>";
+  page += "<p><a href='/ping'><button style='font-size:16px;padding:10px 14px'>Test app server</button></a> ";
+  page += "<a href='/next'><button style='font-size:16px;padding:10px 14px'>Next</button></a> ";
+  page += "<a href='/prev'><button style='font-size:16px;padding:10px 14px'>Prev</button></a></p>";
+  page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
+  page += "</body>";
+  localServer.send(200, "text/html", page);
+}
+
+void handleLocalJpg() {
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }
+  localServer.sendHeader("Cache-Control", "no-store");
+  localServer.send_P(200, "image/jpeg", (const char*)fb->buf, fb->len);
+  esp_camera_fb_return(fb);
+}
+
+void handleLocalCapture() {
+  bool ok = captureAndSend();
+  localServer.send(200, "text/html", String("<p>") + (ok ? "Capture sent to app." : "Capture failed. Check Serial Monitor.") + "</p><p><a href='/'>Back</a></p>");
+}
+
+void handleLocalPing() {
+  bool ok = checkServer();
+  localServer.send(200, "text/html", String("<p>") + (ok ? "App server reachable." : "App server NOT reachable. Check Serial Monitor.") + "</p><p><a href='/'>Back</a></p>");
+}
+
+void startLocalDashboard() {
+  localServer.on("/", handleLocalRoot);
+  localServer.on("/jpg", handleLocalJpg);
+  localServer.on("/capture", handleLocalCapture);
+  localServer.on("/ping", handleLocalPing);
+  localServer.on("/next", []() { bool ok = postCommand("next"); localServer.send(200, "text/html", String("<p>") + (ok ? "Next sent." : "Next failed.") + "</p><p><a href='/'>Back</a></p>"); });
+  localServer.on("/prev", []() { bool ok = postCommand("prev"); localServer.send(200, "text/html", String("<p>") + (ok ? "Prev sent." : "Prev failed.") + "</p><p><a href='/'>Back</a></p>"); });
+  localServer.begin();
+  Serial.printf("Local dashboard: http://%s/\n", WiFi.localIP().toString().c_str());
 }
 
 bool postJpeg(uint8_t* buf, size_t len) {
@@ -261,6 +308,7 @@ void setup() {
 
   if (!initCamera()) { Serial.println("Halting."); while (true) delay(1000); }
   connectWifi();
+  if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   Serial.println("Ready. Type 'ping' to test server, or 'cap' / 'next' / 'prev' in Serial Monitor.");
 }
 
@@ -284,7 +332,8 @@ void handleSerial() {
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) { connectWifi(); delay(500); return; }
+  if (WiFi.status() != WL_CONNECTED) { connectWifi(); if (WiFi.status() == WL_CONNECTED) startLocalDashboard(); delay(500); return; }
+  localServer.handleClient();
   handleSerial();
   if (pressed(CAPTURE_BTN, &capState,  &capT))  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above");
   if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");

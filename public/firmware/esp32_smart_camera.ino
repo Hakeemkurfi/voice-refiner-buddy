@@ -38,6 +38,10 @@ const char* DEVICE_SECRET = "";              // endpoint is open right now — l
 const char* DEVICE_ID     = "esp32-cam-01";
 // ========================
 
+// Send the JPEG in small TLS chunks. HTTPClient can fail with "HTTP -3 send payload failed"
+// on some ESP32-S3 boards when one full camera frame is written as a single HTTPS payload.
+#define UPLOAD_CHUNK_SIZE 1024
+
 // Button pins — chosen so they DO NOT collide with the camera bus.
 // Your camera uses: 4,5,6,7,8,9,10,11,12,13,15,16,17,18.
 // Safe free GPIOs on this board: 1, 2, 3, 14, 21, 38-42.
@@ -114,19 +118,71 @@ bool postJpeg(uint8_t* buf, size_t len) {
   WiFiClientSecure client;
   client.setInsecure();          // skip cert validation (saves RAM)
   client.setTimeout(15000);      // 15s TLS timeout — Lovable edge can be slow on cold start
-  HTTPClient http;
-  http.setReuse(false);
-  http.setTimeout(20000);
-  String url = String("https://") + SERVER_HOST + SERVER_PATH + "?type=capture";
-  Serial.printf("POST %s  (%u bytes)\n", url.c_str(), (unsigned)len);
-  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
-  http.addHeader("Content-Type", "image/jpeg");
-  if (strlen(DEVICE_SECRET) > 0) http.addHeader("X-Device-Secret", DEVICE_SECRET);
-  http.addHeader("X-Device-Id", DEVICE_ID);
-  int code = http.POST(buf, len);
-  String resp = (code > 0) ? http.getString() : http.errorToString(code);
-  Serial.printf("  -> HTTP %d  %s\n", code, resp.c_str());
-  http.end();
+
+  String path = String(SERVER_PATH) + "?type=capture";
+  Serial.printf("POST https://%s%s  (%u bytes, chunked manually)\n", SERVER_HOST, path.c_str(), (unsigned)len);
+  if (!client.connect(SERVER_HOST, 443)) {
+    Serial.println("  -> HTTPS connect failed before sending image");
+    return false;
+  }
+
+  client.printf("POST %s HTTP/1.1\r\n", path.c_str());
+  client.printf("Host: %s\r\n", SERVER_HOST);
+  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor\r\n");
+  client.print("Connection: close\r\n");
+  client.print("Content-Type: image/jpeg\r\n");
+  client.printf("Content-Length: %u\r\n", (unsigned)len);
+  client.printf("X-Device-Id: %s\r\n", DEVICE_ID);
+  if (strlen(DEVICE_SECRET) > 0) client.printf("X-Device-Secret: %s\r\n", DEVICE_SECRET);
+  client.print("\r\n");
+
+  size_t sent = 0;
+  uint8_t stalls = 0;
+  while (sent < len) {
+    if (!client.connected()) {
+      Serial.printf("  -> server closed while sending at %u/%u bytes\n", (unsigned)sent, (unsigned)len);
+      client.stop();
+      return false;
+    }
+    size_t n = min((size_t)UPLOAD_CHUNK_SIZE, len - sent);
+    size_t w = client.write(buf + sent, n);
+    if (w > 0) {
+      sent += w;
+      stalls = 0;
+      if (sent == len || sent % 4096 < UPLOAD_CHUNK_SIZE) Serial.printf("  sent %u/%u\n", (unsigned)sent, (unsigned)len);
+      delay(2);
+    } else {
+      stalls++;
+      delay(50);
+      if (stalls > 20) {
+        Serial.printf("  -> send stalled at %u/%u bytes\n", (unsigned)sent, (unsigned)len);
+        client.stop();
+        return false;
+      }
+    }
+  }
+  client.flush();
+
+  String resp;
+  unsigned long deadline = millis() + 20000;
+  while (millis() < deadline && (client.connected() || client.available())) {
+    while (client.available()) {
+      char c = (char)client.read();
+      if (resp.length() < 1400) resp += c;
+      deadline = millis() + 1500;
+    }
+    delay(10);
+  }
+  client.stop();
+
+  int code = -1;
+  int firstSpace = resp.indexOf(' ');
+  if (firstSpace > 0 && resp.startsWith("HTTP/")) code = resp.substring(firstSpace + 1, firstSpace + 4).toInt();
+  int bodyAt = resp.indexOf("\r\n\r\n");
+  String body = bodyAt >= 0 ? resp.substring(bodyAt + 4) : resp;
+  body.replace("\n", " ");
+  body.replace("\r", " ");
+  Serial.printf("  -> HTTP %d  %s\n", code, body.c_str());
   return code >= 200 && code < 300;
 }
 

@@ -52,6 +52,10 @@ const char* DEVICE_ID     = "esp32-cam-01";
 
 WebServer localServer(80);
 
+bool postCommand(const char* type);
+bool checkServer();
+bool captureAndSend();
+
 // ----- Camera pin map (copied verbatim from your camera_pins.h, ESP32S3_WROOM_CAM)
 #define PWDN_GPIO_NUM     -1
 #define RESET_GPIO_NUM    -1
@@ -135,8 +139,13 @@ void handleLocalRoot() {
 void handleLocalJpg() {
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }
-  localServer.sendHeader("Cache-Control", "no-store");
-  localServer.send_P(200, "image/jpeg", (const char*)fb->buf, fb->len);
+  WiFiClient localClient = localServer.client();
+  localClient.print("HTTP/1.1 200 OK\r\n");
+  localClient.print("Content-Type: image/jpeg\r\n");
+  localClient.printf("Content-Length: %u\r\n", (unsigned)fb->len);
+  localClient.print("Cache-Control: no-store\r\n");
+  localClient.print("Connection: close\r\n\r\n");
+  localClient.write(fb->buf, fb->len);
   esp_camera_fb_return(fb);
 }
 

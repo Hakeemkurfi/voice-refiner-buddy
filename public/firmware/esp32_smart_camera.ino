@@ -27,6 +27,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <WebServer.h>
 
 // ====== EDIT THESE ======
 const char* WIFI_SSID     = "Hakeem";
@@ -38,12 +39,22 @@ const char* DEVICE_SECRET = "";              // endpoint is open right now — l
 const char* DEVICE_ID     = "esp32-cam-01";
 // ========================
 
+// Send the JPEG in small TLS chunks. HTTPClient can fail with "HTTP -3 send payload failed"
+// on some ESP32-S3 boards when one full camera frame is written as a single HTTPS payload.
+#define UPLOAD_CHUNK_SIZE 1024
+
 // Button pins — chosen so they DO NOT collide with the camera bus.
 // Your camera uses: 4,5,6,7,8,9,10,11,12,13,15,16,17,18.
 // Safe free GPIOs on this board: 1, 2, 3, 14, 21, 38-42.
 #define CAPTURE_BTN 1
 #define NEXT_BTN    2
 #define PREV_BTN    3
+
+WebServer localServer(80);
+
+bool postCommand(const char* type);
+bool checkServer();
+bool captureAndSend();
 
 // ----- Camera pin map (copied verbatim from your camera_pins.h, ESP32S3_WROOM_CAM)
 #define PWDN_GPIO_NUM     -1
@@ -110,23 +121,124 @@ void connectWifi() {
   else Serial.println("\nWiFi FAILED — will retry in loop()");
 }
 
+void handleLocalRoot() {
+  String page = "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>";
+  page += "<title>ESP32 Smart Audio Tutor</title><body style='font-family:Arial,sans-serif;margin:20px;line-height:1.4'>";
+  page += "<h2>ESP32 Smart Audio Tutor</h2>";
+  page += "<p>If this preview image appears, the camera is working locally.</p>";
+  page += "<img src='/jpg?ts=" + String(millis()) + "' style='width:100%;max-width:640px;border:1px solid #ccc'>";
+  page += "<p><a href='/capture'><button style='font-size:18px;padding:12px 18px'>Capture and send to app</button></a></p>";
+  page += "<p><a href='/ping'><button style='font-size:16px;padding:10px 14px'>Test app server</button></a> ";
+  page += "<a href='/next'><button style='font-size:16px;padding:10px 14px'>Next</button></a> ";
+  page += "<a href='/prev'><button style='font-size:16px;padding:10px 14px'>Prev</button></a></p>";
+  page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
+  page += "</body>";
+  localServer.send(200, "text/html", page);
+}
+
+void handleLocalJpg() {
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }
+  WiFiClient localClient = localServer.client();
+  localClient.print("HTTP/1.1 200 OK\r\n");
+  localClient.print("Content-Type: image/jpeg\r\n");
+  localClient.printf("Content-Length: %u\r\n", (unsigned)fb->len);
+  localClient.print("Cache-Control: no-store\r\n");
+  localClient.print("Connection: close\r\n\r\n");
+  localClient.write(fb->buf, fb->len);
+  esp_camera_fb_return(fb);
+}
+
+void handleLocalCapture() {
+  bool ok = captureAndSend();
+  localServer.send(200, "text/html", String("<p>") + (ok ? "Capture sent to app." : "Capture failed. Check Serial Monitor.") + "</p><p><a href='/'>Back</a></p>");
+}
+
+void handleLocalPing() {
+  bool ok = checkServer();
+  localServer.send(200, "text/html", String("<p>") + (ok ? "App server reachable." : "App server NOT reachable. Check Serial Monitor.") + "</p><p><a href='/'>Back</a></p>");
+}
+
+void startLocalDashboard() {
+  localServer.on("/", handleLocalRoot);
+  localServer.on("/jpg", handleLocalJpg);
+  localServer.on("/capture", handleLocalCapture);
+  localServer.on("/ping", handleLocalPing);
+  localServer.on("/next", []() { bool ok = postCommand("next"); localServer.send(200, "text/html", String("<p>") + (ok ? "Next sent." : "Next failed.") + "</p><p><a href='/'>Back</a></p>"); });
+  localServer.on("/prev", []() { bool ok = postCommand("prev"); localServer.send(200, "text/html", String("<p>") + (ok ? "Prev sent." : "Prev failed.") + "</p><p><a href='/'>Back</a></p>"); });
+  localServer.begin();
+  Serial.printf("Local dashboard: http://%s/\n", WiFi.localIP().toString().c_str());
+}
+
 bool postJpeg(uint8_t* buf, size_t len) {
   WiFiClientSecure client;
   client.setInsecure();          // skip cert validation (saves RAM)
   client.setTimeout(15000);      // 15s TLS timeout — Lovable edge can be slow on cold start
-  HTTPClient http;
-  http.setReuse(false);
-  http.setTimeout(20000);
-  String url = String("https://") + SERVER_HOST + SERVER_PATH + "?type=capture";
-  Serial.printf("POST %s  (%u bytes)\n", url.c_str(), (unsigned)len);
-  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
-  http.addHeader("Content-Type", "image/jpeg");
-  if (strlen(DEVICE_SECRET) > 0) http.addHeader("X-Device-Secret", DEVICE_SECRET);
-  http.addHeader("X-Device-Id", DEVICE_ID);
-  int code = http.POST(buf, len);
-  String resp = (code > 0) ? http.getString() : http.errorToString(code);
-  Serial.printf("  -> HTTP %d  %s\n", code, resp.c_str());
-  http.end();
+
+  String path = String(SERVER_PATH) + "?type=capture";
+  Serial.printf("POST https://%s%s  (%u bytes, chunked manually)\n", SERVER_HOST, path.c_str(), (unsigned)len);
+  if (!client.connect(SERVER_HOST, 443)) {
+    Serial.println("  -> HTTPS connect failed before sending image");
+    return false;
+  }
+
+  client.printf("POST %s HTTP/1.1\r\n", path.c_str());
+  client.printf("Host: %s\r\n", SERVER_HOST);
+  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor\r\n");
+  client.print("Connection: close\r\n");
+  client.print("Content-Type: image/jpeg\r\n");
+  client.printf("Content-Length: %u\r\n", (unsigned)len);
+  client.printf("X-Device-Id: %s\r\n", DEVICE_ID);
+  if (strlen(DEVICE_SECRET) > 0) client.printf("X-Device-Secret: %s\r\n", DEVICE_SECRET);
+  client.print("\r\n");
+
+  size_t sent = 0;
+  uint8_t stalls = 0;
+  while (sent < len) {
+    if (!client.connected()) {
+      Serial.printf("  -> server closed while sending at %u/%u bytes\n", (unsigned)sent, (unsigned)len);
+      client.stop();
+      return false;
+    }
+    size_t n = min((size_t)UPLOAD_CHUNK_SIZE, len - sent);
+    size_t w = client.write(buf + sent, n);
+    if (w > 0) {
+      sent += w;
+      stalls = 0;
+      if (sent == len || sent % 4096 < UPLOAD_CHUNK_SIZE) Serial.printf("  sent %u/%u\n", (unsigned)sent, (unsigned)len);
+      delay(2);
+    } else {
+      stalls++;
+      delay(50);
+      if (stalls > 20) {
+        Serial.printf("  -> send stalled at %u/%u bytes\n", (unsigned)sent, (unsigned)len);
+        client.stop();
+        return false;
+      }
+    }
+  }
+  client.flush();
+
+  String resp;
+  unsigned long deadline = millis() + 20000;
+  while (millis() < deadline && (client.connected() || client.available())) {
+    while (client.available()) {
+      char c = (char)client.read();
+      if (resp.length() < 1400) resp += c;
+      deadline = millis() + 1500;
+    }
+    delay(10);
+  }
+  client.stop();
+
+  int code = -1;
+  int firstSpace = resp.indexOf(' ');
+  if (firstSpace > 0 && resp.startsWith("HTTP/")) code = resp.substring(firstSpace + 1, firstSpace + 4).toInt();
+  int bodyAt = resp.indexOf("\r\n\r\n");
+  String body = bodyAt >= 0 ? resp.substring(bodyAt + 4) : resp;
+  body.replace("\n", " ");
+  body.replace("\r", " ");
+  Serial.printf("  -> HTTP %d  %s\n", code, body.c_str());
   return code >= 200 && code < 300;
 }
 
@@ -205,6 +317,7 @@ void setup() {
 
   if (!initCamera()) { Serial.println("Halting."); while (true) delay(1000); }
   connectWifi();
+  if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   Serial.println("Ready. Type 'ping' to test server, or 'cap' / 'next' / 'prev' in Serial Monitor.");
 }
 
@@ -228,7 +341,8 @@ void handleSerial() {
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) { connectWifi(); delay(500); return; }
+  if (WiFi.status() != WL_CONNECTED) { connectWifi(); if (WiFi.status() == WL_CONNECTED) startLocalDashboard(); delay(500); return; }
+  localServer.handleClient();
   handleSerial();
   if (pressed(CAPTURE_BTN, &capState,  &capT))  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above");
   if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");

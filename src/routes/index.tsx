@@ -402,6 +402,27 @@ function Index() {
         </Card>
 
         <Card className="p-4">
+          <h2 className="font-semibold text-sm mb-2">🔵 Bluetooth ring remote</h2>
+          <p className="text-xs text-muted-foreground mb-2">
+            Pair the ring with this phone/laptop as a Bluetooth keyboard (the ring's M button cycles modes — pick the one
+            that sends arrow keys). This page listens globally; the controls work even with the screen locked.
+          </p>
+          <ul className="text-xs space-y-1 font-mono">
+            <li><b>▶/❚❚</b> (Space) — Stop / Resume speech</li>
+            <li><b>▲</b> (Up / VolumeUp) — Replay last answer</li>
+            <li><b>▼</b> (Down / VolumeDown) — Re-analyze last image with Pro</li>
+            <li><b>◀</b> (Left) — Previous step / capture</li>
+            <li><b>▶</b> (Right) — Next step / capture</li>
+            <li><b>M</b> (Enter) — Tell ESP32 to take a NEW capture</li>
+          </ul>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Tip: tap "Enable audio" once before locking the screen so the OS keeps the media-key bridge alive.
+          </p>
+        </Card>
+
+
+
+        <Card className="p-4">
           <div className="flex items-start gap-3 mb-3">
             <FileText className="h-5 w-5 text-primary mt-0.5" />
             <div>

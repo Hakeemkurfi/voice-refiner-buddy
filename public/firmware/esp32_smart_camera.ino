@@ -28,6 +28,11 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <WebServer.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEClient.h>
+#include <map>
 
 // ====== EDIT THESE ======
 const char* WIFI_SSID     = "Hakeem";
@@ -50,11 +55,22 @@ const char* DEVICE_ID     = "esp32-cam-01";
 #define NEXT_BTN    2
 #define PREV_BTN    3
 
+// Direct Bluetooth ring mode. Set to 0 if your Arduino ESP32 install does not
+// include the BLE library, or if you need maximum RAM while debugging camera.
+#define ENABLE_BLE_RING 1
+
+// The ring usually advertises as a BLE HID keyboard/media controller.
+// Leave empty to accept the first HID device found; set a fragment like
+// "BT003" / "Ring" / "Remote" if another keyboard is nearby.
+const char* RING_NAME_HINT = "";
+
 WebServer localServer(80);
 
 bool postCommand(const char* type);
 bool checkServer();
 bool captureAndSend();
+void initRingBle();
+void maintainRingBle();
 
 // ----- Camera pin map (copied verbatim from your camera_pins.h, ESP32S3_WROOM_CAM)
 #define PWDN_GPIO_NUM     -1

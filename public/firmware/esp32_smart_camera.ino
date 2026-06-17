@@ -519,5 +519,6 @@ void loop() {
   if (pressed(CAPTURE_BTN, &capState,  &capT))  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above");
   if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");
   if (pressed(PREV_BTN,    &prevState, &prevT)) postCommand("prev");
+  pollTrigger();   // ring remote M button -> capture
   delay(10);
 }

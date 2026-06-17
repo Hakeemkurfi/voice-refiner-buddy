@@ -345,6 +345,57 @@ bool checkServer() {
   return code >= 200 && code < 300;
 }
 
+// ============================================================
+//  RING REMOTE BRIDGE — poll /api/public/trigger every 2s.
+// ============================================================
+// The Bluetooth ring is paired to the user's phone/laptop (not to the
+// ESP32). When the user presses the M button, the web app POSTs to
+// /api/public/trigger. We poll the same endpoint here; if a fresh
+// trigger arrived since the last one we saw, fire captureAndSend().
+String lastTriggerId = "";
+unsigned long lastTriggerPoll = 0;
+const unsigned long TRIGGER_POLL_INTERVAL = 2000; // ms
+
+void pollTrigger() {
+  if (millis() - lastTriggerPoll < TRIGGER_POLL_INTERVAL) return;
+  lastTriggerPoll = millis();
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(5000);
+  HTTPClient http;
+  http.setReuse(false);
+  http.setTimeout(6000);
+  String url = String("https://") + SERVER_HOST + "/api/public/trigger";
+  if (lastTriggerId.length() > 0) url += String("?since=") + lastTriggerId;
+  if (!http.begin(client, url)) return;
+  int code = http.GET();
+  if (code == 200) {
+    String body = http.getString();
+    // tiny manual JSON parse — body looks like {"capture":true,"id":"..."}
+    bool fire = body.indexOf("\"capture\":true") >= 0;
+    int idAt = body.indexOf("\"id\":\"");
+    String newId = "";
+    if (idAt >= 0) {
+      int s = idAt + 6;
+      int e = body.indexOf('"', s);
+      if (e > s) newId = body.substring(s, e);
+    }
+    if (fire && newId.length() > 0 && newId != lastTriggerId) {
+      Serial.printf("[ring] trigger %s -> capturing\n", newId.c_str());
+      lastTriggerId = newId;
+      http.end();
+      captureAndSend();
+      return;
+    } else if (newId.length() > 0) {
+      lastTriggerId = newId; // remember even when not firing (cold start)
+    }
+  }
+  http.end();
+}
+
+
 bool captureAndSend() {
   // === ANTI-BLUR CAPTURE PIPELINE ===
   // Stage A — LONG WARMUP (1.2s): pull 8 frames so AEC / AWB / AGC fully

@@ -124,7 +124,7 @@ bool initCamera() {
   config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 6;                      // 6 = visually lossless (PSRAM has the room)
-  config.fb_count     = 2;
+  config.fb_count     = ENABLE_BLE_RING ? 1 : 2;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) { Serial.printf("Camera init failed: 0x%x\n", err); return false; }

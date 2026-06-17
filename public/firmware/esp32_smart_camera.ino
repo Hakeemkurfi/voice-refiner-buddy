@@ -346,21 +346,42 @@ bool checkServer() {
 }
 
 bool captureAndSend() {
-  // === BURST + PICK SHARPEST ===
-  // 1) Warm the sensor so AEC / AWB / AGC converge on the paper.
-  for (int i = 0; i < 5; i++) {
+  // === ANTI-BLUR CAPTURE PIPELINE ===
+  // Stage A — LONG WARMUP (1.2s): pull 8 frames so AEC / AWB / AGC fully
+  // converge on the bright paper. Without this the first real frame is dim
+  // and the encoder hides text in shadow noise.
+  sensor_t* s = esp_camera_sensor_get();
+  for (int i = 0; i < 8; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
-    delay(140);
+    delay(150);
   }
-  // 2) Take a burst of 5 frames. For a fixed scene at fixed JPEG quality
-  //    the encoder produces a LARGER file when there is MORE edge / high-
-  //    frequency detail — i.e. when the frame is sharper. Pick the biggest
-  //    as our best shot and discard the rest. Same trick pro doc-scanner
-  //    apps use when they don't have a Laplacian variance kernel.
+
+  // Stage B — LOCK EXPOSURE / WB / GAIN. Once AEC has settled on paper we
+  // freeze everything. A locked sensor is a sharp sensor: AGC bumping mid-
+  // frame is the #1 cause of soft / smeary text on OV3660.
+  if (s) {
+    int aec = s->status.aec_value;     // read what auto landed on
+    int gain = s->status.agc_gain;
+    s->set_exposure_ctrl(s, 0);
+    s->set_aec2(s, 0);
+    s->set_aec_value(s, aec > 0 ? aec : 800);
+    s->set_gain_ctrl(s, 0);
+    s->set_agc_gain(s, gain);
+    s->set_whitebal(s, 0);             // lock WB
+    s->set_awb_gain(s, 0);
+    Serial.printf("  locked AEC=%d AGC=%d\n", aec, gain);
+    delay(120);
+  }
+
+  // Stage C — BURST OF 8 frames. For a fixed scene at fixed JPEG quality
+  // the encoder emits a LARGER file when the frame has MORE high-frequency
+  // edge detail (i.e. is sharper). Pick the largest = sharpest. Pro doc-
+  // scanner apps use Laplacian variance; on the JPEG side, size is the
+  // same idea expressed by the DCT.
   camera_fb_t* bestFb = nullptr;
   size_t bestLen = 0;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 8; i++) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) continue;
     bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
@@ -372,8 +393,18 @@ bool captureAndSend() {
     } else {
       esp_camera_fb_return(fb);
     }
-    delay(80);
+    delay(90);
   }
+
+  // Stage D — UNLOCK so the preview at /jpg keeps working between captures.
+  if (s) {
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_gain_ctrl(s, 1);
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+  }
+
   if (!bestFb) { Serial.println("camera capture failed (no usable frame in burst)"); return false; }
   Serial.printf("Sharpest of burst: %u bytes (larger = sharper)\n", (unsigned)bestLen);
   bool ok = postJpeg(bestFb->buf, bestFb->len);

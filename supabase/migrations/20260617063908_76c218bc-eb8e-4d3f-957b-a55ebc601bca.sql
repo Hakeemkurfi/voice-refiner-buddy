@@ -1,0 +1,2 @@
+ALTER TABLE public.events DROP CONSTRAINT IF EXISTS events_type_check;
+ALTER TABLE public.events ADD CONSTRAINT events_type_check CHECK (type = ANY (ARRAY['capture'::text, 'next'::text, 'prev'::text, 'replay'::text, 'stop'::text, 'trigger'::text]));

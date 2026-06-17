@@ -19,7 +19,6 @@ export function useTtsQueue() {
     flatRef.current = flat;
   }, [items]);
 
-  const manualStopRef = useRef(false);
   // Silent looping audio that ANCHORS MediaSession on iOS / Android lock-screen.
   // The browser only shows the lock-screen widget when an <audio> element is
   // actively playing — SpeechSynthesis alone is invisible to MediaSession.

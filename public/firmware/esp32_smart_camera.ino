@@ -119,7 +119,9 @@ bool initCamera() {
   // win for printed text at 15-25 cm.
   config.frame_size   = FRAMESIZE_QXGA;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode    = CAMERA_GRAB_LATEST;
+  // WHEN_EMPTY avoids stale continuous frames. For document scanning we want
+  // the exact frame captured after exposure lock, not an old preview buffer.
+  config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 6;                      // 6 = visually lossless (PSRAM has the room)
   config.fb_count     = 2;
@@ -155,17 +157,17 @@ bool initCamera() {
     // Exposure: AUTO while warming up; we lock it after the burst warmup.
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 1);
-    s->set_ae_level(s, 2);       // +2 brightest
-    s->set_aec_value(s, 1000);
+    s->set_ae_level(s, 0);       // keep paper from overexposing to washed-out grey
+    s->set_aec_value(s, 700);
 
     // Gain: clamp HARD. High ISO turns printed strokes into grey mush.
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
     s->set_gainceiling(s, (gainceiling_t)1);   // cap at 4x
 
-    s->set_brightness(s, 1);
+    s->set_brightness(s, 0);
     s->set_contrast(s, 2);
-    s->set_saturation(s, -2);    // bias toward monochrome — paper has no real color
+    s->set_saturation(s, -1);    // keep enough colour data for backend enhancement
     s->set_sharpness(s, 3);      // +3 max
     s->set_denoise(s, 0);        // denoise BLURS thin strokes. Off.
 
@@ -176,18 +178,19 @@ bool initCamera() {
     s->set_hmirror(s, 0);
     s->set_vflip(s, 0);
     s->set_colorbar(s, 0);
-    // Grayscale special effect: maximum effective contrast for OCR.
-    // Comment this line out if you want colour photos back.
-    s->set_special_effect(s, 2); // 2 = grayscale
+    // Keep original colour; the backend now makes a high-contrast OCR copy.
+    s->set_special_effect(s, 0);
 
     // ---- Register-level sharpness override (the real magic) ----
-    s->set_reg(s, 0x5308, 0xff, 0x40);  // enable manual sharpness path
-    s->set_reg(s, 0x5300, 0xff, 0x10);  // MT offset1 (white edge gain)
-    s->set_reg(s, 0x5301, 0xff, 0x10);  // MT offset2 (black edge gain)
-    s->set_reg(s, 0x5302, 0xff, 0x18);  // denoise threshold1 — low keeps detail
-    s->set_reg(s, 0x5303, 0xff, 0x00);  // denoise threshold2 — off
-    s->set_reg(s, 0x5586, 0xff, 0x30);  // contrast gain
-    s->set_reg(s, 0x5585, 0xff, 0x10);  // contrast offset
+    // Use Espressif's proven OV3660 sharpness path, then add moderate contrast.
+    // Over-driving these registers creates halos that OCR sees as extra marks.
+    s->set_reg(s, 0x5308, 0xff, 0x65);
+    s->set_reg(s, 0x5300, 0xff, 0x18);
+    s->set_reg(s, 0x5301, 0xff, 0x18);
+    s->set_reg(s, 0x5302, 0xff, 0x08);
+    s->set_reg(s, 0x5303, 0xff, 0x30);
+    s->set_reg(s, 0x5586, 0xff, 0x28);
+    s->set_reg(s, 0x5585, 0xff, 0x08);
     s->set_reg(s, 0x5480, 0xff, 0x01);  // gamma enable (S-curve deepens ink)
   }
   return true;

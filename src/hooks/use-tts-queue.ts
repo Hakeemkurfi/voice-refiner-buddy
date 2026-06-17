@@ -10,18 +10,32 @@ export function useTtsQueue() {
   const [rate, setRate] = useState(1);
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
   const manualStopRef = useRef(false);
-
-  const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
-  useEffect(() => {
-    const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
-    items.forEach((it, i) => it.steps.forEach((s, j) => flat.push({ itemIdx: i, stepIdx: j, text: s })));
-    flatRef.current = flat;
-  }, [items]);
+  // Silent looping audio that ANCHORS MediaSession on iOS / Android lock-screen.
+  // The browser only shows the lock-screen widget when an <audio> element is
+  // actively playing — SpeechSynthesis alone is invisible to MediaSession.
+  // We loop a 1-second near-silent WAV under the TTS so the widget stays alive.
+  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ensureSilentAudio = useCallback(() => {
+    if (typeof window === "undefined") return null;
+    if (!silentAudioRef.current) {
+      // 1s of 8-bit silence — small data URL, no asset to ship.
+      const a = new Audio(
+        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=",
+      );
+      a.loop = true;
+      a.volume = 0.01;
+      a.preload = "auto";
+      silentAudioRef.current = a;
+    }
+    return silentAudioRef.current;
+  }, []);
 
   const speak = useCallback(
     (text: string, onEnd?: () => void) => {
       if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
       window.speechSynthesis.cancel();
+      const anchor = ensureSilentAudio();
+      anchor?.play().catch(() => {});
       const u = new SpeechSynthesisUtterance(text);
       u.rate = rate;
       u.pitch = 1;
@@ -36,8 +50,9 @@ export function useTtsQueue() {
       utterRef.current = u;
       window.speechSynthesis.speak(u);
     },
-    [rate],
+    [rate, ensureSilentAudio],
   );
+
 
   const findFlatIdx = useCallback((ii: number, si: number) => {
     return flatRef.current.findIndex((f) => f.itemIdx === ii && f.stepIdx === si);

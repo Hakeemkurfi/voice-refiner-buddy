@@ -10,6 +10,16 @@ export function useTtsQueue() {
   const [rate, setRate] = useState(1);
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
   const manualStopRef = useRef(false);
+  const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
+  useEffect(() => {
+    const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
+    items.forEach((it, i) =>
+      it.steps.forEach((s, j) => flat.push({ itemIdx: i, stepIdx: j, text: s })),
+    );
+    flatRef.current = flat;
+  }, [items]);
+
+  const manualStopRef = useRef(false);
   // Silent looping audio that ANCHORS MediaSession on iOS / Android lock-screen.
   // The browser only shows the lock-screen widget when an <audio> element is
   // actively playing — SpeechSynthesis alone is invisible to MediaSession.

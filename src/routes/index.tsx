@@ -37,7 +37,7 @@ export const Route = createFileRoute("/")({
 
 type EventRow = {
   id: string;
-  type: "capture" | "next" | "prev" | "replay" | "stop";
+  type: "capture" | "next" | "prev" | "replay" | "stop" | "trigger";
   image_b64: string | null;
   image_chars?: number;
   device_id: string | null;

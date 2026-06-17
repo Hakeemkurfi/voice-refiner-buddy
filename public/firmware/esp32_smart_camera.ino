@@ -414,6 +414,123 @@ void pollTrigger() {
   http.end();
 }
 
+// ============================================================
+//  DIRECT BLE HID RING HOST — ESP32 pairs to the ring itself.
+// ============================================================
+#if ENABLE_BLE_RING
+static BLEAdvertisedDevice* ringDevice = nullptr;
+static BLEClient* ringClient = nullptr;
+static bool ringConnected = false;
+static bool ringScanRunning = false;
+static unsigned long lastBleScan = 0;
+static unsigned long lastRingAction = 0;
+
+void ringAction(const char* action) {
+  if (millis() - lastRingAction < 450) return;  // ignore key-release / bounce reports
+  lastRingAction = millis();
+  Serial.printf("[ring] action=%s\n", action);
+  if (!strcmp(action, "capture")) captureAndSend();
+  else if (!strcmp(action, "next")) postCommand("next");
+  else if (!strcmp(action, "prev")) postCommand("prev");
+  else if (!strcmp(action, "replay")) postCommand("replay");
+  else if (!strcmp(action, "stop")) postCommand("stop");
+}
+
+void handleRingReport(uint8_t* d, size_t len) {
+  Serial.print("[ring] report:");
+  for (size_t i = 0; i < len; i++) Serial.printf(" %02X", d[i]);
+  Serial.println();
+  if (len >= 3) {
+    for (size_t i = 2; i < len; i++) {
+      switch (d[i]) {
+        case 0x28: case 0x10: ringAction("capture"); return; // Enter / M
+        case 0x2C: ringAction("stop"); return;                // Space / play-pause
+        case 0x4F: ringAction("next"); return;                // Right arrow
+        case 0x50: ringAction("prev"); return;                // Left arrow
+        case 0x51: ringAction("capture"); return;             // Down arrow = fresh capture
+        case 0x52: ringAction("replay"); return;              // Up arrow
+      }
+    }
+  }
+  if (len == 2) {
+    uint16_t v = d[0] | (uint16_t(d[1]) << 8);
+    switch (v) {
+      case 0x00CD: case 0x0001: ringAction("stop"); break;    // Play/pause variants
+      case 0x00B5: case 0x0080: ringAction("next"); break;
+      case 0x00B6: case 0x0040: ringAction("prev"); break;
+      case 0x00E9: case 0x0010: ringAction("replay"); break;  // Volume up variants
+      case 0x00EA: case 0x0020: ringAction("capture"); break; // Volume down variants
+      default: break;
+    }
+  }
+}
+
+static void ringNotify(BLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
+  handleRingReport(data, len);
+}
+
+class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice dev) override {
+    String name = dev.haveName() ? dev.getName().c_str() : "";
+    bool nameOk = strlen(RING_NAME_HINT) == 0 || name.indexOf(RING_NAME_HINT) >= 0;
+    bool hidOk = dev.haveServiceUUID() && dev.isAdvertisingService(BLEUUID((uint16_t)0x1812));
+    if (nameOk && hidOk) {
+      Serial.printf("[ring] found BLE HID: %s\n", dev.toString().c_str());
+      BLEDevice::getScan()->stop();
+      if (ringDevice) delete ringDevice;
+      ringDevice = new BLEAdvertisedDevice(dev);
+      ringScanRunning = false;
+    }
+  }
+};
+
+bool connectRingBle() {
+  if (!ringDevice) return false;
+  Serial.println("[ring] connecting...");
+  ringClient = BLEDevice::createClient();
+  if (!ringClient->connect(ringDevice)) { Serial.println("[ring] connect failed"); return false; }
+  BLERemoteService* hid = ringClient->getService(BLEUUID((uint16_t)0x1812));
+  if (!hid) { Serial.println("[ring] HID service missing"); ringClient->disconnect(); return false; }
+  int subscribed = 0;
+  std::map<std::string, BLERemoteCharacteristic*>* chars = hid->getCharacteristics();
+  for (auto const& it : *chars) {
+    BLERemoteCharacteristic* c = it.second;
+    if (c->getUUID().equals(BLEUUID((uint16_t)0x2A4D)) && c->canNotify()) {
+      c->registerForNotify(ringNotify);
+      subscribed++;
+    }
+  }
+  ringConnected = subscribed > 0;
+  Serial.printf("[ring] %s, subscribed reports=%d\n", ringConnected ? "ready" : "no notify reports", subscribed);
+  return ringConnected;
+}
+
+void initRingBle() {
+  BLEDevice::init("ESP32 Tutor Ring Host");
+  BLEDevice::setPower(ESP_PWR_LVL_P7);
+  BLEScan* scan = BLEDevice::getScan();
+  scan->setAdvertisedDeviceCallbacks(new RingAdvertisedCallbacks());
+  scan->setActiveScan(true);
+  Serial.println("[ring] BLE HID host enabled. Unpair ring from phone, then hold ring power/pair button.");
+}
+
+void maintainRingBle() {
+  if (ringConnected && ringClient && ringClient->isConnected()) return;
+  ringConnected = false;
+  if (ringDevice && connectRingBle()) return;
+  if (!ringScanRunning && millis() - lastBleScan > 8000) {
+    lastBleScan = millis();
+    ringScanRunning = true;
+    BLEDevice::getScan()->start(5, false);
+    BLEDevice::getScan()->clearResults();
+    ringScanRunning = false;
+  }
+}
+#else
+void initRingBle() {}
+void maintainRingBle() {}
+#endif
+
 
 bool captureAndSend() {
   // === ANTI-BLUR CAPTURE PIPELINE ===

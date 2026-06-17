@@ -28,6 +28,11 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <WebServer.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEScan.h>
+#include <BLEClient.h>
+#include <map>
 
 // ====== EDIT THESE ======
 const char* WIFI_SSID     = "Hakeem";
@@ -50,11 +55,22 @@ const char* DEVICE_ID     = "esp32-cam-01";
 #define NEXT_BTN    2
 #define PREV_BTN    3
 
+// Direct Bluetooth ring mode. Set to 0 if your Arduino ESP32 install does not
+// include the BLE library, or if you need maximum RAM while debugging camera.
+#define ENABLE_BLE_RING 1
+
+// The ring usually advertises as a BLE HID keyboard/media controller.
+// Leave empty to accept the first HID device found; set a fragment like
+// "BT003" / "Ring" / "Remote" if another keyboard is nearby.
+const char* RING_NAME_HINT = "";
+
 WebServer localServer(80);
 
 bool postCommand(const char* type);
 bool checkServer();
 bool captureAndSend();
+void initRingBle();
+void maintainRingBle();
 
 // ----- Camera pin map (copied verbatim from your camera_pins.h, ESP32S3_WROOM_CAM)
 #define PWDN_GPIO_NUM     -1
@@ -103,10 +119,12 @@ bool initCamera() {
   // win for printed text at 15-25 cm.
   config.frame_size   = FRAMESIZE_QXGA;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode    = CAMERA_GRAB_LATEST;
+  // WHEN_EMPTY avoids stale continuous frames. For document scanning we want
+  // the exact frame captured after exposure lock, not an old preview buffer.
+  config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
   config.jpeg_quality = 6;                      // 6 = visually lossless (PSRAM has the room)
-  config.fb_count     = 2;
+  config.fb_count     = ENABLE_BLE_RING ? 1 : 2;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) { Serial.printf("Camera init failed: 0x%x\n", err); return false; }
@@ -139,17 +157,17 @@ bool initCamera() {
     // Exposure: AUTO while warming up; we lock it after the burst warmup.
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 1);
-    s->set_ae_level(s, 2);       // +2 brightest
-    s->set_aec_value(s, 1000);
+    s->set_ae_level(s, 0);       // keep paper from overexposing to washed-out grey
+    s->set_aec_value(s, 700);
 
     // Gain: clamp HARD. High ISO turns printed strokes into grey mush.
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
     s->set_gainceiling(s, (gainceiling_t)1);   // cap at 4x
 
-    s->set_brightness(s, 1);
+    s->set_brightness(s, 0);
     s->set_contrast(s, 2);
-    s->set_saturation(s, -2);    // bias toward monochrome — paper has no real color
+    s->set_saturation(s, -1);    // keep enough colour data for backend enhancement
     s->set_sharpness(s, 3);      // +3 max
     s->set_denoise(s, 0);        // denoise BLURS thin strokes. Off.
 
@@ -160,18 +178,19 @@ bool initCamera() {
     s->set_hmirror(s, 0);
     s->set_vflip(s, 0);
     s->set_colorbar(s, 0);
-    // Grayscale special effect: maximum effective contrast for OCR.
-    // Comment this line out if you want colour photos back.
-    s->set_special_effect(s, 2); // 2 = grayscale
+    // Keep original colour; the backend now makes a high-contrast OCR copy.
+    s->set_special_effect(s, 0);
 
     // ---- Register-level sharpness override (the real magic) ----
-    s->set_reg(s, 0x5308, 0xff, 0x40);  // enable manual sharpness path
-    s->set_reg(s, 0x5300, 0xff, 0x10);  // MT offset1 (white edge gain)
-    s->set_reg(s, 0x5301, 0xff, 0x10);  // MT offset2 (black edge gain)
-    s->set_reg(s, 0x5302, 0xff, 0x18);  // denoise threshold1 — low keeps detail
-    s->set_reg(s, 0x5303, 0xff, 0x00);  // denoise threshold2 — off
-    s->set_reg(s, 0x5586, 0xff, 0x30);  // contrast gain
-    s->set_reg(s, 0x5585, 0xff, 0x10);  // contrast offset
+    // Use Espressif's proven OV3660 sharpness path, then add moderate contrast.
+    // Over-driving these registers creates halos that OCR sees as extra marks.
+    s->set_reg(s, 0x5308, 0xff, 0x65);
+    s->set_reg(s, 0x5300, 0xff, 0x18);
+    s->set_reg(s, 0x5301, 0xff, 0x18);
+    s->set_reg(s, 0x5302, 0xff, 0x08);
+    s->set_reg(s, 0x5303, 0xff, 0x30);
+    s->set_reg(s, 0x5586, 0xff, 0x28);
+    s->set_reg(s, 0x5585, 0xff, 0x08);
     s->set_reg(s, 0x5480, 0xff, 0x01);  // gamma enable (S-curve deepens ink)
   }
   return true;
@@ -394,6 +413,123 @@ void pollTrigger() {
   }
   http.end();
 }
+
+// ============================================================
+//  DIRECT BLE HID RING HOST — ESP32 pairs to the ring itself.
+// ============================================================
+#if ENABLE_BLE_RING
+static BLEAdvertisedDevice* ringDevice = nullptr;
+static BLEClient* ringClient = nullptr;
+static bool ringConnected = false;
+static bool ringScanRunning = false;
+static unsigned long lastBleScan = 0;
+static unsigned long lastRingAction = 0;
+
+void ringAction(const char* action) {
+  if (millis() - lastRingAction < 450) return;  // ignore key-release / bounce reports
+  lastRingAction = millis();
+  Serial.printf("[ring] action=%s\n", action);
+  if (!strcmp(action, "capture")) captureAndSend();
+  else if (!strcmp(action, "next")) postCommand("next");
+  else if (!strcmp(action, "prev")) postCommand("prev");
+  else if (!strcmp(action, "replay")) postCommand("replay");
+  else if (!strcmp(action, "stop")) postCommand("stop");
+}
+
+void handleRingReport(uint8_t* d, size_t len) {
+  Serial.print("[ring] report:");
+  for (size_t i = 0; i < len; i++) Serial.printf(" %02X", d[i]);
+  Serial.println();
+  if (len >= 3) {
+    for (size_t i = 2; i < len; i++) {
+      switch (d[i]) {
+        case 0x28: case 0x10: ringAction("capture"); return; // Enter / M
+        case 0x2C: ringAction("stop"); return;                // Space / play-pause
+        case 0x4F: ringAction("next"); return;                // Right arrow
+        case 0x50: ringAction("prev"); return;                // Left arrow
+        case 0x51: ringAction("capture"); return;             // Down arrow = fresh capture
+        case 0x52: ringAction("replay"); return;              // Up arrow
+      }
+    }
+  }
+  if (len == 2) {
+    uint16_t v = d[0] | (uint16_t(d[1]) << 8);
+    switch (v) {
+      case 0x00CD: case 0x0001: ringAction("stop"); break;    // Play/pause variants
+      case 0x00B5: case 0x0080: ringAction("next"); break;
+      case 0x00B6: case 0x0040: ringAction("prev"); break;
+      case 0x00E9: case 0x0010: ringAction("replay"); break;  // Volume up variants
+      case 0x00EA: case 0x0020: ringAction("capture"); break; // Volume down variants
+      default: break;
+    }
+  }
+}
+
+static void ringNotify(BLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
+  handleRingReport(data, len);
+}
+
+class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice dev) override {
+    String name = dev.haveName() ? dev.getName().c_str() : "";
+    bool nameOk = strlen(RING_NAME_HINT) == 0 || name.indexOf(RING_NAME_HINT) >= 0;
+    bool hidOk = dev.haveServiceUUID() && dev.isAdvertisingService(BLEUUID((uint16_t)0x1812));
+    if (nameOk && hidOk) {
+      Serial.printf("[ring] found BLE HID: %s\n", dev.toString().c_str());
+      BLEDevice::getScan()->stop();
+      if (ringDevice) delete ringDevice;
+      ringDevice = new BLEAdvertisedDevice(dev);
+      ringScanRunning = false;
+    }
+  }
+};
+
+bool connectRingBle() {
+  if (!ringDevice) return false;
+  Serial.println("[ring] connecting...");
+  ringClient = BLEDevice::createClient();
+  if (!ringClient->connect(ringDevice)) { Serial.println("[ring] connect failed"); return false; }
+  BLERemoteService* hid = ringClient->getService(BLEUUID((uint16_t)0x1812));
+  if (!hid) { Serial.println("[ring] HID service missing"); ringClient->disconnect(); return false; }
+  int subscribed = 0;
+  std::map<std::string, BLERemoteCharacteristic*>* chars = hid->getCharacteristics();
+  for (auto const& it : *chars) {
+    BLERemoteCharacteristic* c = it.second;
+    if (c->getUUID().equals(BLEUUID((uint16_t)0x2A4D)) && c->canNotify()) {
+      c->registerForNotify(ringNotify);
+      subscribed++;
+    }
+  }
+  ringConnected = subscribed > 0;
+  Serial.printf("[ring] %s, subscribed reports=%d\n", ringConnected ? "ready" : "no notify reports", subscribed);
+  return ringConnected;
+}
+
+void initRingBle() {
+  BLEDevice::init("ESP32 Tutor Ring Host");
+  BLEDevice::setPower(ESP_PWR_LVL_P7);
+  BLEScan* scan = BLEDevice::getScan();
+  scan->setAdvertisedDeviceCallbacks(new RingAdvertisedCallbacks());
+  scan->setActiveScan(true);
+  Serial.println("[ring] BLE HID host enabled. Unpair ring from phone, then hold ring power/pair button.");
+}
+
+void maintainRingBle() {
+  if (ringConnected && ringClient && ringClient->isConnected()) return;
+  ringConnected = false;
+  if (ringDevice && connectRingBle()) return;
+  if (!ringScanRunning && millis() - lastBleScan > 8000) {
+    lastBleScan = millis();
+    ringScanRunning = true;
+    BLEDevice::getScan()->start(5, false);
+    BLEDevice::getScan()->clearResults();
+    ringScanRunning = false;
+  }
+}
+#else
+void initRingBle() {}
+void maintainRingBle() {}
+#endif
 
 
 bool captureAndSend() {

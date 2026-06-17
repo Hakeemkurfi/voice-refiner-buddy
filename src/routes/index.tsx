@@ -149,6 +149,7 @@ function Index() {
         setStatus("Stop command received from ESP32.");
         stopTts();
       }
+      // 'trigger' events are ring->ESP capture requests; the web UI just logs them.
     },
     [handleCapture, playNext, playPrev, replayTts, sayStatus, stopTts],
   );

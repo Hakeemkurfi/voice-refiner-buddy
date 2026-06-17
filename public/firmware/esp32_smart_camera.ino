@@ -94,60 +94,85 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  // OV3660 native is 2048x1536. UXGA (1600x1200) for sharp text on paper.
-  config.frame_size   = FRAMESIZE_UXGA;
+  // XCLK 16 MHz: OV3660 datasheet allows up to 24 MHz but 20-24 MHz on the
+  // S3-WROOM cam's long DVP traces causes PCLK jitter / banding. 16 MHz is
+  // the documented sweet spot for clean QXGA output on this exact module.
+  config.xclk_freq_hz = 16000000;
+  // OV3660 native is 2048x1536 (QXGA). Giving the encoder real native pixels
+  // (instead of UXGA which is scaled down) is the single biggest sharpness
+  // win for printed text at 15-25 cm.
+  config.frame_size   = FRAMESIZE_QXGA;
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 8;                      // 8 = high quality, sharp edges
+  config.jpeg_quality = 6;                      // 6 = visually lossless (PSRAM has the room)
   config.fb_count     = 2;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) { Serial.printf("Camera init failed: 0x%x\n", err); return false; }
 
-  // ---- NASA-grade tuning for DOCUMENT / PAPER capture (OV3660) ----
-  // Strategy: bias bright + low noise + max sharpness. Most OV cameras
-  // under-expose paper because the white background fools the metering;
-  // we push ae_level +2 and clamp the gain ceiling DOWN (not up) so we
-  // get a slower, cleaner shutter instead of a noisy high-ISO grey frame.
+  // ============================================================
+  // OV3660 ISP TUNING FOR PRINTED TEXT — register-level overrides
+  // ============================================================
+  // The standard sensor_t setters only nudge a few high-level knobs. For real
+  // text-grade output we poke the OV3660 sharpness / contrast / gamma
+  // registers directly over SCCB (OmniVision OV3660 datasheet §6, addr 0x53xx):
+  //   0x5308 bit6  manual sharpness enable (override AUTO)
+  //   0x5300       sharpness MT offset1  (white-edge gain)  HIGH = crisper
+  //   0x5301       sharpness MT offset2  (black-edge gain)  HIGH = crisper
+  //   0x5302       sharpness MT denoise threshold1          LOW  = keep detail
+  //   0x5303       sharpness MT denoise threshold2          LOW  = keep detail
+  //   0x5586       contrast gain
+  //   0x5585       contrast offset
+  //   0x5480       gamma enable
   sensor_t* s = esp_camera_sensor_get();
   if (s) {
-    s->set_framesize(s, FRAMESIZE_UXGA);
-    s->set_quality(s, 8);
+    // High-level setters first (these write a known-good register block)
+    s->set_framesize(s, FRAMESIZE_QXGA);
+    s->set_quality(s, 6);
 
-    // White balance — Sunny preset removes the warm/ash cast under LED bulbs
+    // White balance — Office preset eats the warm cast of indoor LEDs
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 1);        // 1 = Sunny (whites stay white on paper)
+    s->set_wb_mode(s, 3);        // 3 = Office (whites stay white)
 
-    // Exposure — auto, biased bright
+    // Exposure: AUTO while warming up; we lock it after the burst warmup.
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 1);
     s->set_ae_level(s, 2);       // +2 brightest
-    s->set_aec_value(s, 800);
+    s->set_aec_value(s, 1000);
 
-    // Gain — clamp LOW. High gain = grey noisy mush that destroys text.
+    // Gain: clamp HARD. High ISO turns printed strokes into grey mush.
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
-    s->set_gainceiling(s, (gainceiling_t)2);   // cap at 8x, not 32x
+    s->set_gainceiling(s, (gainceiling_t)1);   // cap at 4x
 
-    // Maximum contrast + sharpness for printed characters
     s->set_brightness(s, 1);
     s->set_contrast(s, 2);
-    s->set_saturation(s, -2);
-    s->set_sharpness(s, 3);      // +3 — crispest character edges
-    s->set_denoise(s, 1);
+    s->set_saturation(s, -2);    // bias toward monochrome — paper has no real color
+    s->set_sharpness(s, 3);      // +3 max
+    s->set_denoise(s, 0);        // denoise BLURS thin strokes. Off.
 
-    // Geometry / lens corrections
-    s->set_lenc(s, 1);
-    s->set_bpc(s, 1);
-    s->set_wpc(s, 1);
+    s->set_lenc(s, 1);           // lens shading correction (corner brightness)
+    s->set_bpc(s, 1);            // bad pixel
+    s->set_wpc(s, 1);            // white pixel
     s->set_raw_gma(s, 1);
     s->set_hmirror(s, 0);
     s->set_vflip(s, 0);
     s->set_colorbar(s, 0);
-    s->set_special_effect(s, 0);
+    // Grayscale special effect: maximum effective contrast for OCR.
+    // Comment this line out if you want colour photos back.
+    s->set_special_effect(s, 2); // 2 = grayscale
+
+    // ---- Register-level sharpness override (the real magic) ----
+    s->set_reg(s, 0x5308, 0xff, 0x40);  // enable manual sharpness path
+    s->set_reg(s, 0x5300, 0xff, 0x10);  // MT offset1 (white edge gain)
+    s->set_reg(s, 0x5301, 0xff, 0x10);  // MT offset2 (black edge gain)
+    s->set_reg(s, 0x5302, 0xff, 0x18);  // denoise threshold1 — low keeps detail
+    s->set_reg(s, 0x5303, 0xff, 0x00);  // denoise threshold2 — off
+    s->set_reg(s, 0x5586, 0xff, 0x30);  // contrast gain
+    s->set_reg(s, 0x5585, 0xff, 0x10);  // contrast offset
+    s->set_reg(s, 0x5480, 0xff, 0x01);  // gamma enable (S-curve deepens ink)
   }
   return true;
 }
@@ -321,21 +346,42 @@ bool checkServer() {
 }
 
 bool captureAndSend() {
-  // === BURST + PICK SHARPEST ===
-  // 1) Warm the sensor so AEC / AWB / AGC converge on the paper.
-  for (int i = 0; i < 5; i++) {
+  // === ANTI-BLUR CAPTURE PIPELINE ===
+  // Stage A — LONG WARMUP (1.2s): pull 8 frames so AEC / AWB / AGC fully
+  // converge on the bright paper. Without this the first real frame is dim
+  // and the encoder hides text in shadow noise.
+  sensor_t* s = esp_camera_sensor_get();
+  for (int i = 0; i < 8; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
-    delay(140);
+    delay(150);
   }
-  // 2) Take a burst of 5 frames. For a fixed scene at fixed JPEG quality
-  //    the encoder produces a LARGER file when there is MORE edge / high-
-  //    frequency detail — i.e. when the frame is sharper. Pick the biggest
-  //    as our best shot and discard the rest. Same trick pro doc-scanner
-  //    apps use when they don't have a Laplacian variance kernel.
+
+  // Stage B — LOCK EXPOSURE / WB / GAIN. Once AEC has settled on paper we
+  // freeze everything. A locked sensor is a sharp sensor: AGC bumping mid-
+  // frame is the #1 cause of soft / smeary text on OV3660.
+  if (s) {
+    int aec = s->status.aec_value;     // read what auto landed on
+    int gain = s->status.agc_gain;
+    s->set_exposure_ctrl(s, 0);
+    s->set_aec2(s, 0);
+    s->set_aec_value(s, aec > 0 ? aec : 800);
+    s->set_gain_ctrl(s, 0);
+    s->set_agc_gain(s, gain);
+    s->set_whitebal(s, 0);             // lock WB
+    s->set_awb_gain(s, 0);
+    Serial.printf("  locked AEC=%d AGC=%d\n", aec, gain);
+    delay(120);
+  }
+
+  // Stage C — BURST OF 8 frames. For a fixed scene at fixed JPEG quality
+  // the encoder emits a LARGER file when the frame has MORE high-frequency
+  // edge detail (i.e. is sharper). Pick the largest = sharpest. Pro doc-
+  // scanner apps use Laplacian variance; on the JPEG side, size is the
+  // same idea expressed by the DCT.
   camera_fb_t* bestFb = nullptr;
   size_t bestLen = 0;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 8; i++) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) continue;
     bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
@@ -347,8 +393,18 @@ bool captureAndSend() {
     } else {
       esp_camera_fb_return(fb);
     }
-    delay(80);
+    delay(90);
   }
+
+  // Stage D — UNLOCK so the preview at /jpg keeps working between captures.
+  if (s) {
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_gain_ctrl(s, 1);
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+  }
+
   if (!bestFb) { Serial.println("camera capture failed (no usable frame in burst)"); return false; }
   Serial.printf("Sharpest of burst: %u bytes (larger = sharper)\n", (unsigned)bestLen);
   bool ok = postJpeg(bestFb->buf, bestFb->len);

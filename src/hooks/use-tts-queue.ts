@@ -117,7 +117,9 @@ export function useTtsQueue() {
   const stop = useCallback(() => {
     manualStopRef.current = true;
     if (typeof window !== "undefined") window.speechSynthesis.cancel();
+    silentAudioRef.current?.pause();
     setSpeaking(false);
+
   }, []);
 
   const next = useCallback(() => {

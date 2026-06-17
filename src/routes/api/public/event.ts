@@ -6,7 +6,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, X-Device-Secret, X-Device-Id",
 };
 
-const ALLOWED = new Set(["capture", "next", "prev", "replay", "stop"]);
+const ALLOWED = new Set(["capture", "next", "prev", "replay", "stop", "trigger"]);
 
 export const Route = createFileRoute("/api/public/event")({
   server: {

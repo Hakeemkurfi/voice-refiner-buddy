@@ -37,7 +37,7 @@ export const Route = createFileRoute("/")({
 
 type EventRow = {
   id: string;
-  type: "capture" | "next" | "prev" | "replay" | "stop";
+  type: "capture" | "next" | "prev" | "replay" | "stop" | "trigger";
   image_b64: string | null;
   image_chars?: number;
   device_id: string | null;
@@ -149,6 +149,7 @@ function Index() {
         setStatus("Stop command received from ESP32.");
         stopTts();
       }
+      // 'trigger' events are ring->ESP capture requests; the web UI just logs them.
     },
     [handleCapture, playNext, playPrev, replayTts, sayStatus, stopTts],
   );
@@ -194,6 +195,134 @@ function Index() {
     const timer = window.setInterval(checkServer, 3000);
     return () => window.clearInterval(timer);
   }, [checkServer]);
+
+  // ============================================================
+  //  RING REMOTE — Bluetooth HID keyboard listener
+  // ============================================================
+  // The "Douyin / TikTok" BLE 5.4 ring pairs with this phone/laptop as a
+  // standard HID keyboard. Depending on its mode (toggled by the M button)
+  // the buttons emit different keycodes. We listen for ALL of them so the
+  // ring works no matter which mode it is in:
+  //
+  //   ▶/❚❚  →  " " (Space)            or MediaPlayPause
+  //   ▲     →  ArrowUp / PageUp       or AudioVolumeUp
+  //   ▼     →  ArrowDown / PageDown   or AudioVolumeDown
+  //   ◀     →  ArrowLeft              or MediaTrackPrevious
+  //   ▶     →  ArrowRight             or MediaTrackNext
+  //   M     →  Enter, or "m" key      (used as a remote "shutter")
+  //
+  // MediaSession action handlers catch the real media keys (volume / track)
+  // that the browser would otherwise swallow on iOS / Android lock screen.
+  const triggerEspCapture = useCallback(async () => {
+    setStatus("Ring → asking ESP32 to take a fresh capture…");
+    try {
+      const res = await fetch("/api/public/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: "ring-remote" }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      sayStatus("Capture requested. Hold the camera steady on the page.");
+    } catch (e) {
+      setError(`Trigger failed: ${(e as Error).message}`);
+    }
+  }, [sayStatus]);
+
+  const toggleStopResume = useCallback(() => {
+    if (tts.speaking) {
+      setStatus("Ring → stop speech.");
+      stopTts();
+    } else {
+      setStatus("Ring → resume / replay.");
+      replayTts();
+    }
+  }, [tts.speaking, stopTts, replayTts]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Don't hijack keys while user is typing in the guide textarea / inputs.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement | null)?.isContentEditable) return;
+
+      const k = e.key;
+      let handled = true;
+      switch (k) {
+        case " ":
+        case "Spacebar":
+        case "MediaPlayPause":
+          toggleStopResume();
+          break;
+        case "ArrowUp":
+        case "PageUp":
+        case "AudioVolumeUp":
+          setStatus("Ring ▲ → Replay last answer.");
+          replayTts();
+          break;
+        case "ArrowDown":
+        case "PageDown":
+        case "AudioVolumeDown":
+          if (lastImage) {
+            setStatus("Ring ▼ → Re-analyzing with Pro model.");
+            handleCapture(lastImage, "pro");
+          } else {
+            setStatus("Ring ▼ pressed, but no image to re-analyze yet.");
+          }
+          break;
+        case "ArrowLeft":
+        case "MediaTrackPrevious":
+          setStatus("Ring ◀ → Previous.");
+          playPrev();
+          break;
+        case "ArrowRight":
+        case "MediaTrackNext":
+          setStatus("Ring ▶ → Next.");
+          playNext();
+          break;
+        case "Enter":
+        case "m":
+        case "M":
+          setStatus("Ring M → Trigger capture on ESP32.");
+          triggerEspCapture();
+          break;
+        default:
+          handled = false;
+      }
+      if (handled) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true } as EventListenerOptions);
+  }, [toggleStopResume, replayTts, lastImage, handleCapture, playPrev, playNext, triggerEspCapture]);
+
+  // MediaSession — catches real hardware media keys (volume / play-pause /
+  // next / prev) that BLE rings send through the OS media layer. Requires
+  // audio to have started at least once (we hand it off after unlockAudio).
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    try {
+      ms.setActionHandler("play", toggleStopResume);
+      ms.setActionHandler("pause", toggleStopResume);
+      ms.setActionHandler("nexttrack", () => { setStatus("Ring ▶ → Next."); playNext(); });
+      ms.setActionHandler("previoustrack", () => { setStatus("Ring ◀ → Previous."); playPrev(); });
+      ms.setActionHandler("seekforward", () => { setStatus("Ring ▼ → Re-analyze with Pro."); if (lastImage) handleCapture(lastImage, "pro"); });
+      ms.setActionHandler("seekbackward", () => { setStatus("Ring ▲ → Replay."); replayTts(); });
+    } catch {
+      /* some browsers reject unknown actions — ignore */
+    }
+    return () => {
+      try {
+        ms.setActionHandler("play", null);
+        ms.setActionHandler("pause", null);
+        ms.setActionHandler("nexttrack", null);
+        ms.setActionHandler("previoustrack", null);
+        ms.setActionHandler("seekforward", null);
+        ms.setActionHandler("seekbackward", null);
+      } catch { /* ignore */ }
+    };
+  }, [toggleStopResume, playNext, playPrev, lastImage, handleCapture, replayTts]);
 
   const unlockAudio = () => {
     if (typeof window === "undefined") return;
@@ -271,6 +400,27 @@ function Index() {
             </Button>
           </div>
         </Card>
+
+        <Card className="p-4">
+          <h2 className="font-semibold text-sm mb-2">🔵 Bluetooth ring remote</h2>
+          <p className="text-xs text-muted-foreground mb-2">
+            Pair the ring with this phone/laptop as a Bluetooth keyboard (the ring's M button cycles modes — pick the one
+            that sends arrow keys). This page listens globally; the controls work even with the screen locked.
+          </p>
+          <ul className="text-xs space-y-1 font-mono">
+            <li><b>▶/❚❚</b> (Space) — Stop / Resume speech</li>
+            <li><b>▲</b> (Up / VolumeUp) — Replay last answer</li>
+            <li><b>▼</b> (Down / VolumeDown) — Re-analyze last image with Pro</li>
+            <li><b>◀</b> (Left) — Previous step / capture</li>
+            <li><b>▶</b> (Right) — Next step / capture</li>
+            <li><b>M</b> (Enter) — Tell ESP32 to take a NEW capture</li>
+          </ul>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Tip: tap "Enable audio" once before locking the screen so the OS keeps the media-key bridge alive.
+          </p>
+        </Card>
+
+
 
         <Card className="p-4">
           <div className="flex items-start gap-3 mb-3">

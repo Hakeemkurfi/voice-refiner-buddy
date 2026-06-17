@@ -10,11 +10,17 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
 import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicTriggerRoute = ApiPublicTriggerRouteImport.update({
+  id: '/api/public/trigger',
+  path: '/api/public/trigger',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicEventRoute = ApiPublicEventRouteImport.update({
@@ -26,27 +32,31 @@ const ApiPublicEventRoute = ApiPublicEventRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/trigger': typeof ApiPublicTriggerRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/trigger': typeof ApiPublicTriggerRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/trigger': typeof ApiPublicTriggerRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/public/event'
+  fullPaths: '/' | '/api/public/event' | '/api/public/trigger'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/public/event'
-  id: '__root__' | '/' | '/api/public/event'
+  to: '/' | '/api/public/event' | '/api/public/trigger'
+  id: '__root__' | '/' | '/api/public/event' | '/api/public/trigger'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
+  ApiPublicTriggerRoute: typeof ApiPublicTriggerRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -56,6 +66,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/trigger': {
+      id: '/api/public/trigger'
+      path: '/api/public/trigger'
+      fullPath: '/api/public/trigger'
+      preLoaderRoute: typeof ApiPublicTriggerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/event': {
@@ -71,16 +88,8 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
+  ApiPublicTriggerRoute: ApiPublicTriggerRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { createStart } from '@tanstack/react-start'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-  }
-}

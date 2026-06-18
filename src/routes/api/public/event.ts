@@ -69,10 +69,10 @@ export const Route = createFileRoute("/api/public/event")({
                 headers: { "Content-Type": "application/json", ...CORS },
               });
             }
-            // base64 encode
-            let bin = "";
-            for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i]);
-            image_b64 = btoa(bin);
+            // Fast base64 encode via Buffer (server runtime). The previous
+            // per-byte String.fromCharCode loop blew the call stack on QXGA
+            // frames > 200 KB and stalled the request for seconds.
+            image_b64 = Buffer.from(buf).toString("base64");
           } else {
             const url = new URL(request.url);
             type = url.searchParams.get("type") ?? "capture";

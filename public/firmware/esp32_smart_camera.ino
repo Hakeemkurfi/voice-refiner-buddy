@@ -119,12 +119,16 @@ bool initCamera() {
   // win for printed text at 15-25 cm.
   config.frame_size   = FRAMESIZE_QXGA;
   config.pixel_format = PIXFORMAT_JPEG;
-  // WHEN_EMPTY avoids stale continuous frames. For document scanning we want
-  // the exact frame captured after exposure lock, not an old preview buffer.
-  config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
+  // GRAB_LATEST + fb_count=2 is the espressif-recommended pattern: the driver
+  // keeps filling the second buffer in the background so esp_camera_fb_get()
+  // always returns the freshest converged frame, never a stale one. With
+  // fb_count=1 GRAB_LATEST is silently ignored (see esp32-camera issue #417).
+  config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 6;                      // 6 = visually lossless (PSRAM has the room)
-  config.fb_count     = ENABLE_BLE_RING ? 1 : 2;
+  // QS=4: very high quality JPEG (~250-350 KB at QXGA). Lower QS = sharper
+  // text edges; PSRAM on the N16R8 has plenty of headroom for 2 buffers.
+  config.jpeg_quality = 4;
+  config.fb_count     = 2;   // MUST be 2 for GRAB_LATEST, even with BLE on
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) { Serial.printf("Camera init failed: 0x%x\n", err); return false; }
@@ -147,7 +151,7 @@ bool initCamera() {
   if (s) {
     // High-level setters first (these write a known-good register block)
     s->set_framesize(s, FRAMESIZE_QXGA);
-    s->set_quality(s, 6);
+    s->set_quality(s, 4);
 
     // White balance — Office preset eats the warm cast of indoor LEDs
     s->set_whitebal(s, 1);
@@ -156,8 +160,8 @@ bool initCamera() {
 
     // Exposure: AUTO while warming up; we lock it after the burst warmup.
     s->set_exposure_ctrl(s, 1);
-    s->set_aec2(s, 1);
-    s->set_ae_level(s, 0);       // keep paper from overexposing to washed-out grey
+    s->set_aec2(s, 0);           // night mode OFF — no long exposures = no blur
+    s->set_ae_level(s, 1);       // +1 bias so white paper renders bright, not grey
     s->set_aec_value(s, 700);
 
     // Gain: clamp HARD. High ISO turns printed strokes into grey mush.

@@ -200,22 +200,8 @@ function Index() {
     }
   }, [processEvent]);
 
-  useEffect(() => {
-    const channel = supabase
-      .channel("events-stream")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "events" },
-        (payload) => {
-          const row = payload.new as EventRow;
-          processEvent(row, "live");
-        },
-      )
-      .subscribe((status) => setRealtimeOnline(status === "SUBSCRIBED"));
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [processEvent]);
+  // (Realtime subscription removed — `events` is no longer in the realtime
+  // publication for security. We now rely on the 3s polling below.)
 
   useEffect(() => {
     checkServer();

@@ -236,6 +236,17 @@ void handleLocalRoot() {
   localServer.send(200, "text/html", page);
 }
 
+// A JPEG is only "complete" if it starts with FFD8 (SOI) AND ends with FFD9
+// (EOI). Without the EOI check the firmware happily uploads truncated frames
+// from DMA overruns — those decode as the top half of the image followed by
+// a rainbow stripe and color-shifted garbage in the bottom half.
+static inline bool isCompleteJpeg(const uint8_t* buf, size_t len) {
+  if (!buf || len < 4) return false;
+  if (buf[0] != 0xFF || buf[1] != 0xD8) return false;
+  if (buf[len - 2] != 0xFF || buf[len - 1] != 0xD9) return false;
+  return true;
+}
+
 void handleLocalJpg() {
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }

@@ -677,11 +677,13 @@ bool runBurst() {
     unsigned long frameStart = millis();
     camera_fb_t* fb = esp_camera_fb_get();
     if (fb) {
-      bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
+      bool jpeg = isCompleteJpeg(fb->buf, fb->len);
       if (jpeg) {
         bool ok = postBurstFrame(burstId.c_str(), seq, fb->buf, fb->len);
         Serial.printf("  [burst %d] %u bytes -> %s\n", seq, (unsigned)fb->len, ok ? "ok" : "FAIL");
         if (ok) sent++;
+      } else {
+        Serial.printf("  [burst %d] %u bytes -> DROPPED (truncated jpeg, no EOI)\n", seq, (unsigned)fb->len);
       }
       esp_camera_fb_return(fb);
       seq++;

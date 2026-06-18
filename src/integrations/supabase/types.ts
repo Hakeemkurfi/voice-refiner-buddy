@@ -14,6 +14,74 @@ export type Database = {
   }
   public: {
     Tables: {
+      burst_frames: {
+        Row: {
+          burst_id: string
+          byte_size: number | null
+          created_at: string
+          id: string
+          image_b64: string
+          seq: number
+          sharpness: number | null
+        }
+        Insert: {
+          burst_id: string
+          byte_size?: number | null
+          created_at?: string
+          id?: string
+          image_b64: string
+          seq: number
+          sharpness?: number | null
+        }
+        Update: {
+          burst_id?: string
+          byte_size?: number | null
+          created_at?: string
+          id?: string
+          image_b64?: string
+          seq?: number
+          sharpness?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "burst_frames_burst_id_fkey"
+            columns: ["burst_id"]
+            isOneToOne: false
+            referencedRelation: "bursts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bursts: {
+        Row: {
+          created_at: string
+          device_id: string | null
+          frame_count: number
+          id: string
+          picked_seqs: number[]
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          device_id?: string | null
+          frame_count?: number
+          id?: string
+          picked_seqs?: number[]
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          device_id?: string | null
+          frame_count?: number
+          id?: string
+          picked_seqs?: number[]
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       events: {
         Row: {
           created_at: string

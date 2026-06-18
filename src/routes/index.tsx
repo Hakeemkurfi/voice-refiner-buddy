@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { supabase } from "@/integrations/supabase/client";
 import { analyzeImage } from "@/lib/analyze.functions";
 import { useTtsQueue } from "@/hooks/use-tts-queue";
 import { Button } from "@/components/ui/button";
@@ -19,6 +18,7 @@ import {
   Volume2,
   RefreshCw,
   FileText,
+  Layers,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -83,17 +83,37 @@ function Index() {
     [audioUnlocked, speakNow],
   );
 
-  const handleCapture = useCallback(async (image_b64: string, model: "flash" | "pro" = "flash") => {
+  const handleCapture = useCallback(async (
+    arg: { image_b64?: string; burst_id?: string },
+    model: "flash" | "pro" = "flash",
+  ) => {
     setBusy(true);
     setError(null);
-    setLastImage(image_b64);
+    if (arg.image_b64) setLastImage(arg.image_b64);
     setExtracted("");
-    sayStatus(model === "pro" ? "Re-analyzing with the stronger model." : "Picture received. I am analyzing it now.");
+    sayStatus(
+      arg.burst_id
+        ? "Burst received. Reading the sharpest frames now."
+        : model === "pro"
+          ? "Re-analyzing with the stronger model."
+          : "Picture received. I am analyzing it now.",
+    );
     try {
-      const out = await analyze({ data: { image_b64, contextText: contextRef.current, model } });
+      const out = await analyze({
+        data: {
+          image_b64: arg.image_b64,
+          burst_id: arg.burst_id,
+          contextText: contextRef.current,
+          model,
+        },
+      });
       addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
       setExtracted(out.extractedText ?? "");
-      setUsedModel(out.modelUsed ?? "");
+      setUsedModel(
+        out.framesUsed > 1
+          ? `${out.modelUsed} • ${out.framesUsed} frames`
+          : out.modelUsed ?? "",
+      );
       setStatus("Analysis ready. Reading the answer now.");
     } catch (e) {
       const message = (e as Error).message;
@@ -134,8 +154,15 @@ function Index() {
         ].slice(0, 30),
       );
       if (row.type === "capture") {
-        if (row.image_b64) handleCapture(row.image_b64);
-        else sayStatus("Capture message received, but there was no JPEG image attached.");
+        // device_id "burst:<burst_id>:<device>" → multi-image burst analysis
+        const burstMatch = row.device_id?.match(/^burst:([0-9a-f-]{36})/i);
+        if (burstMatch) {
+          handleCapture({ burst_id: burstMatch[1], image_b64: row.image_b64 ?? undefined });
+        } else if (row.image_b64) {
+          handleCapture({ image_b64: row.image_b64 });
+        } else {
+          sayStatus("Capture message received, but there was no JPEG image attached.");
+        }
       } else if (row.type === "next") {
         setStatus("Next command received from ESP32.");
         playNext();
@@ -173,22 +200,8 @@ function Index() {
     }
   }, [processEvent]);
 
-  useEffect(() => {
-    const channel = supabase
-      .channel("events-stream")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "events" },
-        (payload) => {
-          const row = payload.new as EventRow;
-          processEvent(row, "live");
-        },
-      )
-      .subscribe((status) => setRealtimeOnline(status === "SUBSCRIBED"));
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [processEvent]);
+  // (Realtime subscription removed — `events` is no longer in the realtime
+  // publication for security. We now rely on the 3s polling below.)
 
   useEffect(() => {
     checkServer();
@@ -263,7 +276,7 @@ function Index() {
         case "AudioVolumeDown":
           if (lastImage) {
             setStatus("Ring ▼ → Re-analyzing with Pro model.");
-            handleCapture(lastImage, "pro");
+            handleCapture({ image_b64: lastImage }, "pro");
           } else {
             setStatus("Ring ▼ pressed, but no image to re-analyze yet.");
           }
@@ -307,7 +320,7 @@ function Index() {
       ms.setActionHandler("pause", toggleStopResume);
       ms.setActionHandler("nexttrack", () => { setStatus("Ring ▶ → Next."); playNext(); });
       ms.setActionHandler("previoustrack", () => { setStatus("Ring ◀ → Previous."); playPrev(); });
-      ms.setActionHandler("seekforward", () => { setStatus("Ring ▼ → Re-analyze with Pro."); if (lastImage) handleCapture(lastImage, "pro"); });
+      ms.setActionHandler("seekforward", () => { setStatus("Ring ▼ → Re-analyze with Pro."); if (lastImage) handleCapture({ image_b64: lastImage }, "pro"); });
       ms.setActionHandler("seekbackward", () => { setStatus("Ring ▲ → Replay."); replayTts(); });
     } catch {
       /* some browsers reject unknown actions — ignore */
@@ -344,7 +357,7 @@ function Index() {
     // fake test pixel so user can try without esp32
     const dummy =
       "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AB//Z";
-    await handleCapture(dummy);
+    await handleCapture({ image_b64: dummy });
   };
 
   const currentItem = tts.items[tts.currentItemIdx];
@@ -473,7 +486,7 @@ function Index() {
                   size="sm"
                   variant="outline"
                   disabled={busy}
-                  onClick={() => handleCapture(lastImage, "pro")}
+                  onClick={() => handleCapture({ image_b64: lastImage }, "pro")}
                 >
                   Re-analyze with Pro (stronger OCR)
                 </Button>

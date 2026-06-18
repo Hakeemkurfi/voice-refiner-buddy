@@ -40,13 +40,61 @@ export const Route = createFileRoute("/api/public/event")({
       },
       POST: async ({ request }) => {
         try {
-          // Endpoint intentionally OPEN for ESP32 testing — no shared secret.
-
           const ctype = request.headers.get("content-type") ?? "";
+          const url = new URL(request.url);
+
+          // ----- BURST FRAME PATH -----
+          // ESP32 posts each frame of a burst with ?burst=<uuid>&seq=<n>
+          const burstId = url.searchParams.get("burst");
+          const seqStr = url.searchParams.get("seq");
+          const device_id_q = request.headers.get("x-device-id") ?? "esp32-cam-01";
+
+          if (burstId && seqStr && ctype.startsWith("image/")) {
+            const seq = parseInt(seqStr, 10);
+            const buf = new Uint8Array(await request.arrayBuffer());
+            const looksLikeJpeg = buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8;
+            if (!looksLikeJpeg) {
+              return new Response(JSON.stringify({ error: "burst frame not JPEG" }), {
+                status: 400,
+                headers: { "Content-Type": "application/json", ...CORS },
+              });
+            }
+            const image_b64 = Buffer.from(buf).toString("base64");
+            const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+            // Create the burst row on seq=0 (idempotent upsert via on conflict do nothing)
+            if (seq === 0) {
+              await supabaseAdmin
+                .from("bursts")
+                .upsert({ id: burstId, device_id: device_id_q, status: "capturing" }, { onConflict: "id" });
+            }
+
+            // Insert the frame. byte_size is our sharpness proxy:
+            // for a fixed scene at fixed JPEG quality, larger JPEG = more high-frequency
+            // edge detail = sharper. Same idea as Laplacian variance, computed for free.
+            const { error: insErr } = await supabaseAdmin.from("burst_frames").insert({
+              burst_id: burstId,
+              seq,
+              image_b64,
+              byte_size: buf.length,
+              sharpness: buf.length, // store as float; finalize ranks by this
+            });
+            if (insErr) {
+              return new Response(JSON.stringify({ error: insErr.message }), {
+                status: 500,
+                headers: { "Content-Type": "application/json", ...CORS },
+              });
+            }
+            return new Response(JSON.stringify({ ok: true, burst: burstId, seq, bytes: buf.length }), {
+              status: 200,
+              headers: { "Content-Type": "application/json", ...CORS },
+            });
+          }
+
+          // ----- LEGACY SINGLE-EVENT PATH (unchanged) -----
           let type = "capture";
           let image_b64: string | null = null;
-          let device_id: string | null =
-            request.headers.get("x-device-id") ?? null;
+          let device_id: string | null = device_id_q;
 
           if (ctype.includes("application/json")) {
             const body = (await request.json()) as {
@@ -58,8 +106,6 @@ export const Route = createFileRoute("/api/public/event")({
             image_b64 = body.image_b64 ?? null;
             device_id = body.device_id ?? device_id;
           } else if (ctype.startsWith("image/")) {
-            // Raw JPEG body from the ESP32. Treat as capture.
-            const url = new URL(request.url);
             type = url.searchParams.get("type") ?? "capture";
             const buf = new Uint8Array(await request.arrayBuffer());
             const looksLikeJpeg = buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8;
@@ -69,12 +115,8 @@ export const Route = createFileRoute("/api/public/event")({
                 headers: { "Content-Type": "application/json", ...CORS },
               });
             }
-            // Fast base64 encode via Buffer (server runtime). The previous
-            // per-byte String.fromCharCode loop blew the call stack on QXGA
-            // frames > 200 KB and stalled the request for seconds.
             image_b64 = Buffer.from(buf).toString("base64");
           } else {
-            const url = new URL(request.url);
             type = url.searchParams.get("type") ?? "capture";
           }
 

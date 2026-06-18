@@ -276,7 +276,7 @@ function Index() {
         case "AudioVolumeDown":
           if (lastImage) {
             setStatus("Ring ▼ → Re-analyzing with Pro model.");
-            handleCapture(lastImage, "pro");
+            handleCapture({ image_b64: lastImage }, "pro");
           } else {
             setStatus("Ring ▼ pressed, but no image to re-analyze yet.");
           }
@@ -320,7 +320,7 @@ function Index() {
       ms.setActionHandler("pause", toggleStopResume);
       ms.setActionHandler("nexttrack", () => { setStatus("Ring ▶ → Next."); playNext(); });
       ms.setActionHandler("previoustrack", () => { setStatus("Ring ◀ → Previous."); playPrev(); });
-      ms.setActionHandler("seekforward", () => { setStatus("Ring ▼ → Re-analyze with Pro."); if (lastImage) handleCapture(lastImage, "pro"); });
+      ms.setActionHandler("seekforward", () => { setStatus("Ring ▼ → Re-analyze with Pro."); if (lastImage) handleCapture({ image_b64: lastImage }, "pro"); });
       ms.setActionHandler("seekbackward", () => { setStatus("Ring ▲ → Replay."); replayTts(); });
     } catch {
       /* some browsers reject unknown actions — ignore */
@@ -357,7 +357,7 @@ function Index() {
     // fake test pixel so user can try without esp32
     const dummy =
       "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AB//Z";
-    await handleCapture(dummy);
+    await handleCapture({ image_b64: dummy });
   };
 
   const currentItem = tts.items[tts.currentItemIdx];

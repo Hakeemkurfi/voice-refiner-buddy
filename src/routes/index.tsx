@@ -486,7 +486,7 @@ function Index() {
                   size="sm"
                   variant="outline"
                   disabled={busy}
-                  onClick={() => handleCapture(lastImage, "pro")}
+                  onClick={() => handleCapture({ image_b64: lastImage }, "pro")}
                 >
                   Re-analyze with Pro (stronger OCR)
                 </Button>

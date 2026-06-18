@@ -746,8 +746,8 @@ bool captureAndSend() {
   for (int i = 0; i < 8; i++) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) continue;
-    bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
-    Serial.printf("  burst[%d]: %u bytes, jpeg=%s\n", i, (unsigned)fb->len, jpeg ? "y" : "n");
+    bool jpeg = isCompleteJpeg(fb->buf, fb->len);
+    Serial.printf("  burst[%d]: %u bytes, complete-jpeg=%s\n", i, (unsigned)fb->len, jpeg ? "y" : "n");
     if (jpeg && fb->len > bestLen) {
       if (bestFb) esp_camera_fb_return(bestFb);
       bestFb = fb;

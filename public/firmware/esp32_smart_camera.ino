@@ -151,7 +151,7 @@ bool initCamera() {
   if (s) {
     // High-level setters first (these write a known-good register block)
     s->set_framesize(s, FRAMESIZE_QXGA);
-    s->set_quality(s, 6);
+    s->set_quality(s, 4);
 
     // White balance — Office preset eats the warm cast of indoor LEDs
     s->set_whitebal(s, 1);
@@ -160,8 +160,8 @@ bool initCamera() {
 
     // Exposure: AUTO while warming up; we lock it after the burst warmup.
     s->set_exposure_ctrl(s, 1);
-    s->set_aec2(s, 1);
-    s->set_ae_level(s, 0);       // keep paper from overexposing to washed-out grey
+    s->set_aec2(s, 0);           // night mode OFF — no long exposures = no blur
+    s->set_ae_level(s, 1);       // +1 bias so white paper renders bright, not grey
     s->set_aec_value(s, 700);
 
     // Gain: clamp HARD. High ISO turns printed strokes into grey mush.

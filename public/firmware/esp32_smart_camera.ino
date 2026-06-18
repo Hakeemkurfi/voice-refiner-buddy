@@ -443,7 +443,7 @@ void ringAction(const char* action) {
   if (millis() - lastRingAction < 450) return;  // ignore key-release / bounce reports
   lastRingAction = millis();
   Serial.printf("[ring] action=%s\n", action);
-  if (!strcmp(action, "capture")) captureAndSend();
+  if (!strcmp(action, "capture")) runBurst();   // M button → burst of frames
   else if (!strcmp(action, "next")) postCommand("next");
   else if (!strcmp(action, "prev")) postCommand("prev");
   else if (!strcmp(action, "replay")) postCommand("replay");

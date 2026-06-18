@@ -464,12 +464,13 @@ function Index() {
                 href={`data:image/jpeg;base64,${lastImage}`}
                 target="_blank"
                 rel="noreferrer"
-                className="block relative rounded-lg overflow-hidden bg-muted border"
+                className="block relative rounded-lg overflow-hidden bg-muted border mx-auto"
+                style={{ maxWidth: "320px", aspectRatio: "210 / 297" }}
               >
                 <img
                   src={`data:image/jpeg;base64,${lastImage}`}
                   alt="What the AI sees"
-                  className="w-full max-h-96 object-contain bg-black/5"
+                  className="w-full h-full object-contain bg-black/5"
                 />
                 {busy && (
                   <div className="absolute inset-0 bg-black/40 flex items-center justify-center">

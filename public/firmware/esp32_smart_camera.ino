@@ -120,10 +120,11 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  // XCLK 16 MHz: OV3660 datasheet allows up to 24 MHz but 20-24 MHz on the
-  // S3-WROOM cam's long DVP traces causes PCLK jitter / banding. 16 MHz is
-  // the documented sweet spot for clean QXGA output on this exact module.
-  config.xclk_freq_hz = 16000000;
+  // XCLK 10 MHz: at QXGA the long DVP traces on the S3-WROOM cam can't keep
+  // up with PCLK at 16-24 MHz — symptom is exactly the horizontal rainbow
+  // stripe + color-shifted lower half you see in the preview. Dropping XCLK
+  // to 10 MHz fixes it (espressif esp32-camera issues #195, #532, #639).
+  config.xclk_freq_hz = 10000000;
   // OV3660 native is 2048x1536 (QXGA). Giving the encoder real native pixels
   // (instead of UXGA which is scaled down) is the single biggest sharpness
   // win for printed text at 15-25 cm.
@@ -233,6 +234,17 @@ void handleLocalRoot() {
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
   page += "</body>";
   localServer.send(200, "text/html", page);
+}
+
+// A JPEG is only "complete" if it starts with FFD8 (SOI) AND ends with FFD9
+// (EOI). Without the EOI check the firmware happily uploads truncated frames
+// from DMA overruns — those decode as the top half of the image followed by
+// a rainbow stripe and color-shifted garbage in the bottom half.
+static inline bool isCompleteJpeg(const uint8_t* buf, size_t len) {
+  if (!buf || len < 4) return false;
+  if (buf[0] != 0xFF || buf[1] != 0xD8) return false;
+  if (buf[len - 2] != 0xFF || buf[len - 1] != 0xD9) return false;
+  return true;
 }
 
 void handleLocalJpg() {
@@ -665,11 +677,13 @@ bool runBurst() {
     unsigned long frameStart = millis();
     camera_fb_t* fb = esp_camera_fb_get();
     if (fb) {
-      bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
+      bool jpeg = isCompleteJpeg(fb->buf, fb->len);
       if (jpeg) {
         bool ok = postBurstFrame(burstId.c_str(), seq, fb->buf, fb->len);
         Serial.printf("  [burst %d] %u bytes -> %s\n", seq, (unsigned)fb->len, ok ? "ok" : "FAIL");
         if (ok) sent++;
+      } else {
+        Serial.printf("  [burst %d] %u bytes -> DROPPED (truncated jpeg, no EOI)\n", seq, (unsigned)fb->len);
       }
       esp_camera_fb_return(fb);
       seq++;
@@ -732,8 +746,8 @@ bool captureAndSend() {
   for (int i = 0; i < 8; i++) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) continue;
-    bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
-    Serial.printf("  burst[%d]: %u bytes, jpeg=%s\n", i, (unsigned)fb->len, jpeg ? "y" : "n");
+    bool jpeg = isCompleteJpeg(fb->buf, fb->len);
+    Serial.printf("  burst[%d]: %u bytes, complete-jpeg=%s\n", i, (unsigned)fb->len, jpeg ? "y" : "n");
     if (jpeg && fb->len > bestLen) {
       if (bestFb) esp_camera_fb_return(bestFb);
       bestFb = fb;

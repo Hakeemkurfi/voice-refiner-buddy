@@ -154,8 +154,15 @@ function Index() {
         ].slice(0, 30),
       );
       if (row.type === "capture") {
-        if (row.image_b64) handleCapture(row.image_b64);
-        else sayStatus("Capture message received, but there was no JPEG image attached.");
+        // device_id "burst:<burst_id>:<device>" → multi-image burst analysis
+        const burstMatch = row.device_id?.match(/^burst:([0-9a-f-]{36})/i);
+        if (burstMatch) {
+          handleCapture({ burst_id: burstMatch[1], image_b64: row.image_b64 ?? undefined });
+        } else if (row.image_b64) {
+          handleCapture({ image_b64: row.image_b64 });
+        } else {
+          sayStatus("Capture message received, but there was no JPEG image attached.");
+        }
       } else if (row.type === "next") {
         setStatus("Next command received from ESP32.");
         playNext();

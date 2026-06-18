@@ -444,6 +444,7 @@ void ringAction(const char* action) {
   lastRingAction = millis();
   Serial.printf("[ring] action=%s\n", action);
   if (!strcmp(action, "capture")) runBurst();   // M button → burst of frames
+  else if (!strcmp(action, "single")) captureAndSend(); // fallback single-shot
   else if (!strcmp(action, "next")) postCommand("next");
   else if (!strcmp(action, "prev")) postCommand("prev");
   else if (!strcmp(action, "replay")) postCommand("replay");
@@ -461,7 +462,7 @@ void handleRingReport(uint8_t* d, size_t len) {
         case 0x2C: ringAction("stop"); return;                // Space / play-pause
         case 0x4F: ringAction("next"); return;                // Right arrow
         case 0x50: ringAction("prev"); return;                // Left arrow
-        case 0x51: ringAction("capture"); return;             // Down arrow = fresh capture
+        case 0x51: ringAction("single"); return;              // Down arrow = single-shot capture (fallback)
         case 0x52: ringAction("replay"); return;              // Up arrow
       }
     }

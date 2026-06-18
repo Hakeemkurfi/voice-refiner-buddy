@@ -120,10 +120,11 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  // XCLK 16 MHz: OV3660 datasheet allows up to 24 MHz but 20-24 MHz on the
-  // S3-WROOM cam's long DVP traces causes PCLK jitter / banding. 16 MHz is
-  // the documented sweet spot for clean QXGA output on this exact module.
-  config.xclk_freq_hz = 16000000;
+  // XCLK 10 MHz: at QXGA the long DVP traces on the S3-WROOM cam can't keep
+  // up with PCLK at 16-24 MHz — symptom is exactly the horizontal rainbow
+  // stripe + color-shifted lower half you see in the preview. Dropping XCLK
+  // to 10 MHz fixes it (espressif esp32-camera issues #195, #532, #639).
+  config.xclk_freq_hz = 10000000;
   // OV3660 native is 2048x1536 (QXGA). Giving the encoder real native pixels
   // (instead of UXGA which is scaled down) is the single biggest sharpness
   // win for printed text at 15-25 cm.

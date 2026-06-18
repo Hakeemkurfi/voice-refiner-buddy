@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { supabase } from "@/integrations/supabase/client";
 import { analyzeImage } from "@/lib/analyze.functions";
 import { useTtsQueue } from "@/hooks/use-tts-queue";
 import { Button } from "@/components/ui/button";
@@ -19,6 +18,7 @@ import {
   Volume2,
   RefreshCw,
   FileText,
+  Layers,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({

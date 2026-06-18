@@ -547,6 +547,152 @@ void maintainRingBle() {}
 #endif
 
 
+// ============================================================
+//  BURST CAPTURE — many JPEGs of the SAME page over ~4 seconds.
+// ============================================================
+//  Why: a single OV3660 shot has only one chance to be in focus, exposed,
+//  and motion-free. A burst gives the server many tries; the server picks
+//  the 3 sharpest frames (spread across the burst so we cover a pan over
+//  half an A4 page) and sends them all to Gemini.
+
+static String makeUuidV4() {
+  // RFC 4122 v4-shaped string built from ESP32 hardware RNG. Good enough
+  // as a per-burst id; collisions across this single device are impossible
+  // within human timescales.
+  uint8_t b[16];
+  for (int i = 0; i < 16; i++) b[i] = (uint8_t)esp_random();
+  b[6] = (b[6] & 0x0F) | 0x40;   // version 4
+  b[8] = (b[8] & 0x3F) | 0x80;   // variant 1
+  char out[37];
+  snprintf(out, sizeof(out),
+    "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+    b[0],b[1],b[2],b[3], b[4],b[5], b[6],b[7], b[8],b[9],
+    b[10],b[11],b[12],b[13],b[14],b[15]);
+  return String(out);
+}
+
+// Stream one frame to /api/public/event?burst=<id>&seq=<n> (chunked TLS write,
+// same anti-stall pattern as postJpeg).
+bool postBurstFrame(const char* burstId, int seq, uint8_t* buf, size_t len) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(15000);
+
+  String path = String(SERVER_PATH) + "?burst=" + burstId + "&seq=" + String(seq);
+  if (!client.connect(SERVER_HOST, 443)) {
+    Serial.printf("  [burst %d] HTTPS connect failed\n", seq);
+    return false;
+  }
+  client.printf("POST %s HTTP/1.1\r\n", path.c_str());
+  client.printf("Host: %s\r\n", SERVER_HOST);
+  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor\r\n");
+  client.print("Connection: close\r\n");
+  client.print("Content-Type: image/jpeg\r\n");
+  client.printf("Content-Length: %u\r\n", (unsigned)len);
+  client.printf("X-Device-Id: %s\r\n", DEVICE_ID);
+  client.print("\r\n");
+
+  size_t sent = 0;
+  uint8_t stalls = 0;
+  while (sent < len) {
+    if (!client.connected()) { client.stop(); return false; }
+    size_t n = min((size_t)UPLOAD_CHUNK_SIZE, len - sent);
+    size_t w = client.write(buf + sent, n);
+    if (w > 0) { sent += w; stalls = 0; delay(2); }
+    else { stalls++; delay(50); if (stalls > 20) { client.stop(); return false; } }
+  }
+  client.flush();
+
+  // Drain headers (quick) — we don't care about the body for burst frames.
+  unsigned long deadline = millis() + 6000;
+  while (millis() < deadline && (client.connected() || client.available())) {
+    while (client.available()) { client.read(); deadline = millis() + 800; }
+    delay(5);
+  }
+  client.stop();
+  return true;
+}
+
+bool postBurstFinalize(const char* burstId) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(15000);
+  HTTPClient http;
+  http.setReuse(false);
+  http.setTimeout(20000);
+  String url = String("https://") + SERVER_HOST + "/api/public/burst/finalize?id=" + burstId;
+  if (!http.begin(client, url)) return false;
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-Device-Id", DEVICE_ID);
+  int code = http.POST("{}");
+  String resp = (code > 0) ? http.getString() : http.errorToString(code);
+  Serial.printf("[burst] finalize -> HTTP %d  %s\n", code, resp.c_str());
+  http.end();
+  return code >= 200 && code < 300;
+}
+
+bool runBurst() {
+  String burstId = makeUuidV4();
+  Serial.printf("[burst] start id=%s\n", burstId.c_str());
+
+  // Same warmup + lock as captureAndSend, so all burst frames share one
+  // converged exposure (otherwise AGC bumping mid-burst makes some frames
+  // washed out and others dim).
+  sensor_t* s = esp_camera_sensor_get();
+  for (int i = 0; i < 6; i++) {
+    camera_fb_t* warm = esp_camera_fb_get();
+    if (warm) esp_camera_fb_return(warm);
+    delay(120);
+  }
+  if (s) {
+    int aec = s->status.aec_value;
+    int gain = s->status.agc_gain;
+    s->set_exposure_ctrl(s, 0);
+    s->set_aec2(s, 0);
+    s->set_aec_value(s, aec > 0 ? aec : 800);
+    s->set_gain_ctrl(s, 0);
+    s->set_agc_gain(s, gain);
+    s->set_whitebal(s, 0);
+    s->set_awb_gain(s, 0);
+    Serial.printf("  [burst] locked AEC=%d AGC=%d\n", aec, gain);
+    delay(80);
+  }
+
+  unsigned long t0 = millis();
+  int seq = 0;
+  int sent = 0;
+  while (millis() - t0 < BURST_MS && seq < BURST_MAX_FRAMES) {
+    unsigned long frameStart = millis();
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (fb) {
+      bool jpeg = fb->len > 3 && fb->buf[0] == 0xFF && fb->buf[1] == 0xD8;
+      if (jpeg) {
+        bool ok = postBurstFrame(burstId.c_str(), seq, fb->buf, fb->len);
+        Serial.printf("  [burst %d] %u bytes -> %s\n", seq, (unsigned)fb->len, ok ? "ok" : "FAIL");
+        if (ok) sent++;
+      }
+      esp_camera_fb_return(fb);
+      seq++;
+    }
+    // Pace the loop so we don't slam the camera faster than it can deliver.
+    unsigned long elapsed = millis() - frameStart;
+    if (elapsed < BURST_MIN_GAP_MS) delay(BURST_MIN_GAP_MS - elapsed);
+  }
+
+  // Unlock so the local /jpg preview keeps working between bursts.
+  if (s) {
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 1);
+    s->set_gain_ctrl(s, 1);
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+  }
+
+  Serial.printf("[burst] done: %d frames sent, finalizing...\n", sent);
+  if (sent == 0) return false;
+  return postBurstFinalize(burstId.c_str());
+}
+
 bool captureAndSend() {
   // === ANTI-BLUR CAPTURE PIPELINE ===
   // Stage A — LONG WARMUP (1.2s): pull 8 frames so AEC / AWB / AGC fully

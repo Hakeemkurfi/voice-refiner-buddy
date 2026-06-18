@@ -83,17 +83,37 @@ function Index() {
     [audioUnlocked, speakNow],
   );
 
-  const handleCapture = useCallback(async (image_b64: string, model: "flash" | "pro" = "flash") => {
+  const handleCapture = useCallback(async (
+    arg: { image_b64?: string; burst_id?: string },
+    model: "flash" | "pro" = "flash",
+  ) => {
     setBusy(true);
     setError(null);
-    setLastImage(image_b64);
+    if (arg.image_b64) setLastImage(arg.image_b64);
     setExtracted("");
-    sayStatus(model === "pro" ? "Re-analyzing with the stronger model." : "Picture received. I am analyzing it now.");
+    sayStatus(
+      arg.burst_id
+        ? "Burst received. Reading the sharpest frames now."
+        : model === "pro"
+          ? "Re-analyzing with the stronger model."
+          : "Picture received. I am analyzing it now.",
+    );
     try {
-      const out = await analyze({ data: { image_b64, contextText: contextRef.current, model } });
+      const out = await analyze({
+        data: {
+          image_b64: arg.image_b64,
+          burst_id: arg.burst_id,
+          contextText: contextRef.current,
+          model,
+        },
+      });
       addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
       setExtracted(out.extractedText ?? "");
-      setUsedModel(out.modelUsed ?? "");
+      setUsedModel(
+        out.framesUsed > 1
+          ? `${out.modelUsed} • ${out.framesUsed} frames`
+          : out.modelUsed ?? "",
+      );
       setStatus("Analysis ready. Reading the answer now.");
     } catch (e) {
       const message = (e as Error).message;

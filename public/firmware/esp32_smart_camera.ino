@@ -48,6 +48,15 @@ const char* DEVICE_ID     = "esp32-cam-01";
 // on some ESP32-S3 boards when one full camera frame is written as a single HTTPS payload.
 #define UPLOAD_CHUNK_SIZE 1024
 
+// ====== BURST CAPTURE ======
+// On M button (ring) we record a multi-frame burst, stream each frame to the
+// server, then call /api/public/burst/finalize. The server picks the 3
+// sharpest frames spread across the burst and sends them as a multi-image
+// request to Gemini, which merges the text across all frames.
+#define BURST_MS            4000   // total burst length in milliseconds
+#define BURST_MIN_GAP_MS    160    // ~6 fps target; OV3660 QXGA caps out around here
+#define BURST_MAX_FRAMES    30     // hard safety cap
+
 // Button pins — chosen so they DO NOT collide with the camera bus.
 // Your camera uses: 4,5,6,7,8,9,10,11,12,13,15,16,17,18.
 // Safe free GPIOs on this board: 1, 2, 3, 14, 21, 38-42.
@@ -69,6 +78,7 @@ WebServer localServer(80);
 bool postCommand(const char* type);
 bool checkServer();
 bool captureAndSend();
+bool runBurst();
 void initRingBle();
 void maintainRingBle();
 

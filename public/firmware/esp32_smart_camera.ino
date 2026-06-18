@@ -522,7 +522,7 @@ bool connectRingBle() {
 
 void initRingBle() {
   BLEDevice::init("ESP32 Tutor Ring Host");
-  BLEDevice::setPower(ESP_PWR_LVL_P7);
+  BLEDevice::setPower(ESP_PWR_LVL_P9);
   BLEScan* scan = BLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(new RingAdvertisedCallbacks());
   scan->setActiveScan(true);

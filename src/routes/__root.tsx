@@ -30,7 +30,12 @@ export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "viewport", content: "width=device-width, initial-scale=1, viewport-fit=cover" },
+      { name: "theme-color", content: "#0b1020" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
+      { name: "apple-mobile-web-app-title", content: "Audio Tutor" },
+      { name: "mobile-web-app-capable", content: "yes" },
       { title: "Lovable App" },
       { name: "description", content: "Text Refine rephrases and restructures original content to bypass plagiarism checkers." },
       { name: "author", content: "Lovable" },

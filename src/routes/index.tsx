@@ -70,10 +70,13 @@ function Index() {
   >([]);
   const seenRef = useRef<Set<string>>(new Set());
   const contextRef = useRef("");
+  const hasPriorResultRef = useRef(false);
+  const [nextInCountdown, setNextInCountdown] = useState(0);
 
   useEffect(() => {
     contextRef.current = contextText;
   }, [contextText]);
+
 
   const sayStatus = useCallback(
     (message: string) => {

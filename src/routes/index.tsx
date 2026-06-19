@@ -469,6 +469,11 @@ function Index() {
             <div className="flex-1 min-w-0">
               <p className="font-medium text-sm">Bridge status</p>
               <p className="text-xs text-muted-foreground mt-1">{status}</p>
+              {nextInCountdown > 0 && (
+                <p className="mt-2 inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-semibold">
+                  ⏱ Next problem starts in {nextInCountdown}s…
+                </p>
+              )}
             </div>
             <Button size="sm" variant="outline" onClick={checkServer} className="gap-1">
               <RefreshCw className="h-3 w-3" />
@@ -476,6 +481,7 @@ function Index() {
             </Button>
           </div>
         </Card>
+
 
         <Card className="p-4">
           <div className="flex items-start gap-3 mb-3">

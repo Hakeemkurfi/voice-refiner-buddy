@@ -203,8 +203,69 @@ export const analyzeImage = createServerFn({ method: "POST" })
         /* keep flash */
       }
     }
-    return finalize(result, used, escalated, images_b64.length);
+
+    // Kimi verification pass — cross-check math & step quality (text-only, fast)
+    const verified = await kimiVerify(result, data.contextText).catch(() => result);
+    return finalize(verified, used, escalated, images_b64.length, verified !== result);
   });
+
+const KIMI_VERIFIER_PROMPT = `You are a meticulous math/physics grader and TTS-script editor. You will receive a JSON object produced by another AI that solved a problem from a student's photo, plus the verbatim text the OCR engine read off the page. Your job:
+1) Recompute the math silently. If any step is wrong (arithmetic, sign, exponent, integration bound, derivative rule, units), FIX it.
+2) Make sure every step is ONE clear spoken sentence (8-22 words), starts with a cue word (First/Next/Now/Then/Substituting/Simplifying/Finally), and reads math fully in English words (no raw symbols, no LaTeX, no markdown). Use phrasing like "x squared", "the integral from a to b of f of x d x", "the derivative with respect to x of", "the limit as x approaches zero of".
+3) Break work into 8-16 micro-steps so the listener can write each line.
+4) The last step must clearly state the final answer in words.
+5) Keep extractedText unchanged unless the OCR is obviously wrong; in that case correct it and keep LaTeX inside $...$.
+Return ONLY the corrected JSON in the exact same shape: {"title","summary","steps","extractedText","confidence"}. No commentary.`;
+
+async function kimiVerify(parsed: Parsed, contextText?: string): Promise<Parsed> {
+  const kimiKey = process.env.KIMI_API_KEY;
+  if (!kimiKey) return parsed;
+  const body = {
+    model: "kimi-k2-0905-preview",
+    temperature: 0.2,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: KIMI_VERIFIER_PROMPT },
+      {
+        role: "user",
+        content:
+          `Draft from the first AI (JSON):\n${JSON.stringify(parsed)}\n\n` +
+          (contextText?.trim()
+            ? `Class material to follow:\n${contextText.trim().slice(0, 6000)}\n\n`
+            : "") +
+          `Verify the math, fix any error, and rewrite the steps to be perfectly listenable.`,
+      },
+    ],
+  };
+  const res = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${kimiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return parsed;
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const content = json.choices?.[0]?.message?.content ?? "";
+  try {
+    const out = JSON.parse(content) as Parsed;
+    if (Array.isArray(out.steps) && out.steps.length > 0) return out;
+    return parsed;
+  } catch {
+    const m = content.match(/\{[\s\S]*\}/);
+    if (m) {
+      try {
+        const out = JSON.parse(m[0]) as Parsed;
+        if (Array.isArray(out.steps) && out.steps.length > 0) return out;
+      } catch {
+        /* ignore */
+      }
+    }
+    return parsed;
+  }
+}
+
 
 function finalize(parsed: Parsed, modelUsed: string, escalated: boolean, framesUsed: number) {
   const steps = (parsed.steps ?? []).filter(

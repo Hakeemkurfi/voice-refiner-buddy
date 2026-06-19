@@ -283,5 +283,7 @@ function finalize(parsed: Parsed, modelUsed: string, escalated: boolean, framesU
     modelUsed,
     escalated,
     framesUsed,
+    kimiVerified,
+
   };
 }

@@ -360,11 +360,25 @@ function Index() {
 
   const unlockAudio = () => {
     if (typeof window === "undefined") return;
-    const u = new SpeechSynthesisUtterance("Audio is ready. I will speak when a picture arrives.");
-    u.rate = tts.rate;
-    window.speechSynthesis.speak(u);
+    // Trigger both engines inside the user gesture so iOS / Android allow
+    // background playback after the screen locks.
+    try {
+      const a = new Audio(
+        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=",
+      );
+      a.volume = 0.01;
+      a.play().catch(() => {});
+    } catch { /* ignore */ }
+    try {
+      if ("speechSynthesis" in window) {
+        const u = new SpeechSynthesisUtterance(" ");
+        u.volume = 0.01;
+        window.speechSynthesis.speak(u);
+      }
+    } catch { /* ignore */ }
+    tts.speakNow("Audio is ready. I will speak when a picture arrives.");
     setAudioUnlocked(true);
-    setStatus("Audio is enabled. Now type cap in Serial Monitor or press capture on the ESP32.");
+    setStatus("Audio is enabled. The voice will keep playing even if your phone screen locks.");
   };
 
   const loadGuideFile = async (file: File | null) => {
@@ -653,14 +667,14 @@ function Index() {
             <span className="text-xs text-muted-foreground">Speed</span>
             <input
               type="range"
-              min={0.6}
-              max={1.6}
-              step={0.1}
+              min={0.5}
+              max={1.3}
+              step={0.05}
               value={tts.rate}
               onChange={(e) => tts.setRate(parseFloat(e.target.value))}
               className="flex-1"
             />
-            <span className="text-xs tabular-nums w-8 text-right">{tts.rate.toFixed(1)}x</span>
+            <span className="text-xs tabular-nums w-12 text-right">{tts.rate.toFixed(2)}x</span>
           </div>
 
           {error && <p className="text-sm text-destructive mt-3">{error}</p>}

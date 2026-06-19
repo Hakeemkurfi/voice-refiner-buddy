@@ -1,0 +1,19 @@
+{
+  "name": "Smart Audio Tutor",
+  "short_name": "Audio Tutor",
+  "description": "Capture math, physics or notes with your ESP32-S3 camera and listen to a step-by-step spoken explanation.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
+  "icons": [
+    {
+      "src": "/placeholder.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

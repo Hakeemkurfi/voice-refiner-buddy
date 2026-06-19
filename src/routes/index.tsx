@@ -353,12 +353,54 @@ function Index() {
     setStatus("Class guide loaded. The next picture will use this material.");
   };
 
+  // Client-side downscale → JPEG base64. Keeps long edge ≤ maxEdge so the
+  // payload stays small but text is still sharp enough for the OCR pass.
+  const fileToBase64 = async (file: File, maxEdge = 1600, quality = 0.85): Promise<string> => {
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    const img: HTMLImageElement = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas 2d unsupported");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const jpeg = canvas.toDataURL("image/jpeg", quality);
+    return jpeg.split(",")[1] ?? "";
+  };
+
+  const onPickPhoto = async (file: File | null, useProModel = false) => {
+    if (!file) return;
+    try {
+      setStatus("Compressing photo…");
+      const b64 = await fileToBase64(file);
+      await handleCapture({ image_b64: b64 }, useProModel ? "pro" : "flash");
+    } catch (e) {
+      setError(`Photo upload failed: ${(e as Error).message}`);
+    }
+  };
+
   const testCapture = async () => {
     // fake test pixel so user can try without esp32
     const dummy =
       "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AB//Z";
     await handleCapture({ image_b64: dummy });
   };
+
 
   const currentItem = tts.items[tts.currentItemIdx];
   const currentStep = currentItem?.steps?.[tts.stepIdx];
@@ -415,6 +457,54 @@ function Index() {
         </Card>
 
         <Card className="p-4">
+          <div className="flex items-start gap-3 mb-3">
+            <Camera className="h-5 w-5 text-primary mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <h2 className="font-semibold text-sm">📷 Snap or upload a photo (test without ESP32)</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Use your phone camera or pick a photo from the gallery. Same AI pipeline as the ESP32 —
+                great for testing voice quality and step-by-step dictation.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent">
+              <Camera className="h-4 w-4" />
+              Take photo
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                disabled={busy}
+                onChange={(e) => {
+                  onPickPhoto(e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <label className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent">
+              <Layers className="h-4 w-4" />
+              Upload from gallery
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={busy}
+                onChange={(e) => {
+                  onPickPhoto(e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Auto-resized to ~1600 px JPEG, sent to Gemini, then cross-checked by Kimi for math accuracy
+            and listenable steps.
+          </p>
+        </Card>
+
+        <Card className="p-4">
           <h2 className="font-semibold text-sm mb-2">🔵 Bluetooth ring remote</h2>
           <p className="text-xs text-muted-foreground mb-2">
             Pair the ring with this phone/laptop as a Bluetooth keyboard (the ring's M button cycles modes — pick the one
@@ -429,9 +519,13 @@ function Index() {
             <li><b>M</b> (Enter) — Tell ESP32 to take a NEW capture</li>
           </ul>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Tip: tap "Enable audio" once before locking the screen so the OS keeps the media-key bridge alive.
+            To confirm pairing: open phone Bluetooth settings → the ring should show as <b>Connected</b> (name usually
+            "AB Shutter", "BR100" or similar). Press any ring button while focused on this page — if you see "Ring …"
+            text in the bridge status above, the pairing is live. If nothing happens, re-pair the ring and toggle its
+            M-mode until the page reacts.
           </p>
         </Card>
+
 
 
 

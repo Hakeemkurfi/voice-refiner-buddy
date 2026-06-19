@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
 import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
 import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
 import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/burst.finalize'
@@ -17,6 +18,11 @@ import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicTtsRoute = ApiPublicTtsRouteImport.update({
+  id: '/api/public/tts',
+  path: '/api/public/tts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicTriggerRoute = ApiPublicTriggerRouteImport.update({
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
+  '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
+  '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
 }
 export interface FileRoutesById {
@@ -52,6 +60,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
+  '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
 }
 export interface FileRouteTypes {
@@ -60,18 +69,21 @@ export interface FileRouteTypes {
     | '/'
     | '/api/public/event'
     | '/api/public/trigger'
+    | '/api/public/tts'
     | '/api/public/burst/finalize'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/api/public/event'
     | '/api/public/trigger'
+    | '/api/public/tts'
     | '/api/public/burst/finalize'
   id:
     | '__root__'
     | '/'
     | '/api/public/event'
     | '/api/public/trigger'
+    | '/api/public/tts'
     | '/api/public/burst/finalize'
   fileRoutesById: FileRoutesById
 }
@@ -79,6 +91,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
   ApiPublicTriggerRoute: typeof ApiPublicTriggerRoute
+  ApiPublicTtsRoute: typeof ApiPublicTtsRoute
   ApiPublicBurstFinalizeRoute: typeof ApiPublicBurstFinalizeRoute
 }
 
@@ -89,6 +102,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/tts': {
+      id: '/api/public/tts'
+      path: '/api/public/tts'
+      fullPath: '/api/public/tts'
+      preLoaderRoute: typeof ApiPublicTtsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/trigger': {
@@ -119,6 +139,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
   ApiPublicTriggerRoute: ApiPublicTriggerRoute,
+  ApiPublicTtsRoute: ApiPublicTtsRoute,
   ApiPublicBurstFinalizeRoute: ApiPublicBurstFinalizeRoute,
 }
 export const routeTree = rootRouteImport

@@ -27,6 +27,7 @@ Stage 1 — OCR PASS. Read every visible character, line by line, left to right,
 Stage 2 — STRUCTURE PASS. Detect equations vs prose vs multi-part problems. Preserve line breaks in extractedText. For every math expression, also produce a LaTeX version inside extractedText using $...$ delimiters. Describe any graph (axes, curve shape, key points) or table (rows × cols, headers) in plain words.
 
 Stage 3 — SOLVE / EXPLAIN PASS. Identify the task (transcribe, solve, explain, prove, plot, classify…). If class material is provided, FOLLOW ITS METHOD AND NOTATION exactly. Think through the steps internally and double-check arithmetic, signs, exponents and limits of integration. Re-derive each step before writing it.
+CRITICAL: If the page contains a problem, an exercise, an equation, an integral, a derivative, a limit, a system, a proof, a "find / compute / evaluate / solve / show that" instruction — you MUST SOLVE IT FULLY and walk through the work. NEVER return only the restated question. NEVER stop after reading the problem. The student is blind to the page; they need the full worked solution dictated aloud. If the task is ambiguous (e.g. "discuss"), pick the most likely interpretation and solve it; mention the assumption in step 2.
 
 Stage 4 — ANSWER PASS. State the final answer(s) explicitly. For multi-part questions, answer every part.
 
@@ -211,10 +212,11 @@ export const analyzeImage = createServerFn({ method: "POST" })
 
 const KIMI_VERIFIER_PROMPT = `You are a meticulous math/physics grader and TTS-script editor. You will receive a JSON object produced by another AI that solved a problem from a student's photo, plus the verbatim text the OCR engine read off the page. Your job:
 1) Recompute the math silently. If any step is wrong (arithmetic, sign, exponent, integration bound, derivative rule, units), FIX it.
-2) Make sure every step is ONE clear spoken sentence (8-22 words), starts with a cue word (First/Next/Now/Then/Substituting/Simplifying/Finally), and reads math fully in English words (no raw symbols, no LaTeX, no markdown). Use phrasing like "x squared", "the integral from a to b of f of x d x", "the derivative with respect to x of", "the limit as x approaches zero of".
-3) Break work into 8-16 micro-steps so the listener can write each line.
-4) The last step must clearly state the final answer in words.
-5) Keep extractedText unchanged unless the OCR is obviously wrong; in that case correct it and keep LaTeX inside $...$.
+2) IF THE DRAFT ONLY RESTATES THE QUESTION WITHOUT SOLVING IT, you MUST produce the full worked solution yourself, from setup to final answer. Never leave a problem unsolved.
+3) Make sure every step is ONE clear spoken sentence (8-22 words), starts with a cue word (First/Next/Now/Then/Substituting/Simplifying/Finally), and reads math fully in English words (no raw symbols, no LaTeX, no markdown). Use phrasing like "x squared", "the integral from a to b of f of x d x", "the derivative with respect to x of", "the limit as x approaches zero of".
+4) Break work into 8-16 micro-steps so the listener can write each line.
+5) The last step must clearly state the final answer in words.
+6) Keep extractedText unchanged unless the OCR is obviously wrong; in that case correct it and keep LaTeX inside $...$.
 Return ONLY the corrected JSON in the exact same shape: {"title","summary","steps","extractedText","confidence"}. No commentary.`;
 
 async function kimiVerify(parsed: Parsed, contextText?: string): Promise<Parsed> {

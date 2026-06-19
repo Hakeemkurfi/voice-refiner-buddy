@@ -45,10 +45,9 @@ export const Route = createRootRoute({
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/0185ac04-0d2a-4206-b0ff-0d58f00b6ada/id-preview-fb384060--f2f7f3b4-222e-468d-8016-13a5b4541c9b.lovable.app-1781186585394.png" },
     ],
     links: [
-      {
-        rel: "stylesheet",
-        href: appCss,
-      },
+      { rel: "stylesheet", href: appCss },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "apple-touch-icon", href: "/placeholder.svg" },
     ],
   }),
   shellComponent: RootShell,

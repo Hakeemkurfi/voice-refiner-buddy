@@ -2,15 +2,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type TtsItem = { id: string; title: string; steps: string[] };
 
+// TTS hook that plays REAL audio bytes from /api/public/tts (OpenAI mp3 via
+// Lovable AI Gateway). Played through a single HTMLAudioElement so playback
+// survives screen-lock on iOS and Android. SpeechSynthesis is kept as a
+// fallback only when the network call fails (e.g. offline preview).
+
 export function useTtsQueue() {
   const [items, setItems] = useState<TtsItem[]>([]);
   const [currentItemIdx, setCurrentItemIdx] = useState(0);
   const [stepIdx, setStepIdx] = useState(0);
   const [speaking, setSpeaking] = useState(false);
-  const [rate, setRate] = useState(1);
-  const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
+  // 0.9 = calm, conversational tutor pace. User asked for ~50% slower than the
+  // robotic SpeechSynthesis default; with the OpenAI voice 0.9 sounds natural
+  // and very dictation-friendly.
+  const [rate, setRate] = useState(0.9);
+  const [voice] = useState<string>("sage");
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const manualStopRef = useRef(false);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
+  const tokenRef = useRef(0); // cancels stale playbacks
+
   useEffect(() => {
     const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
     items.forEach((it, i) =>
@@ -19,49 +31,82 @@ export function useTtsQueue() {
     flatRef.current = flat;
   }, [items]);
 
-  // Silent looping audio that ANCHORS MediaSession on iOS / Android lock-screen.
-  // The browser only shows the lock-screen widget when an <audio> element is
-  // actively playing — SpeechSynthesis alone is invisible to MediaSession.
-  // We loop a 1-second near-silent WAV under the TTS so the widget stays alive.
-  const silentAudioRef = useRef<HTMLAudioElement | null>(null);
-  const ensureSilentAudio = useCallback(() => {
+  const ensureAudio = useCallback(() => {
     if (typeof window === "undefined") return null;
-    if (!silentAudioRef.current) {
-      // 1s of 8-bit silence — small data URL, no asset to ship.
-      const a = new Audio(
-        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=",
-      );
-      a.loop = true;
-      a.volume = 0.01;
+    if (!audioRef.current) {
+      const a = new Audio();
       a.preload = "auto";
-      silentAudioRef.current = a;
+      // Important on iOS: a real <audio> element with real bytes keeps the
+      // MediaSession + background audio alive when the screen locks.
+      audioRef.current = a;
     }
-    return silentAudioRef.current;
+    return audioRef.current;
   }, []);
 
+  // Speak via backend MP3 (preferred) with SpeechSynthesis fallback.
   const speak = useCallback(
     (text: string, onEnd?: () => void) => {
-      if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-      window.speechSynthesis.cancel();
-      const anchor = ensureSilentAudio();
-      anchor?.play().catch(() => {});
-      const u = new SpeechSynthesisUtterance(text);
-      u.rate = rate;
-      u.pitch = 1;
-      u.lang = "en-US";
-      u.onstart = () => setSpeaking(true);
-      u.onend = () => {
-        setSpeaking(false);
-        if (!manualStopRef.current && onEnd) onEnd();
-        manualStopRef.current = false;
-      };
-      u.onerror = () => setSpeaking(false);
-      utterRef.current = u;
-      window.speechSynthesis.speak(u);
-    },
-    [rate, ensureSilentAudio],
-  );
+      if (typeof window === "undefined") return;
+      const myToken = ++tokenRef.current;
+      manualStopRef.current = false;
 
+      const fallbackToSpeech = () => {
+        if (myToken !== tokenRef.current) return;
+        if (!("speechSynthesis" in window)) return;
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = rate;
+        u.pitch = 1;
+        u.lang = "en-US";
+        u.onstart = () => setSpeaking(true);
+        u.onend = () => {
+          setSpeaking(false);
+          if (!manualStopRef.current && onEnd) onEnd();
+        };
+        u.onerror = () => setSpeaking(false);
+        window.speechSynthesis.speak(u);
+      };
+
+      const audio = ensureAudio();
+      if (!audio) return fallbackToSpeech();
+
+      fetch("/api/public/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, voice, speed: rate }),
+      })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(`tts ${res.status}`);
+          const blob = await res.blob();
+          if (myToken !== tokenRef.current) return;
+          const url = URL.createObjectURL(blob);
+          audio.src = url;
+          audio.playbackRate = 1; // server already applied speed
+          audio.onplay = () => {
+            if (myToken === tokenRef.current) setSpeaking(true);
+          };
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            if (myToken !== tokenRef.current) return;
+            setSpeaking(false);
+            if (!manualStopRef.current && onEnd) onEnd();
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            if (myToken !== tokenRef.current) return;
+            setSpeaking(false);
+            fallbackToSpeech();
+          };
+          try {
+            await audio.play();
+          } catch {
+            fallbackToSpeech();
+          }
+        })
+        .catch(() => fallbackToSpeech());
+    },
+    [rate, voice, ensureAudio],
+  );
 
   const findFlatIdx = useCallback((ii: number, si: number) => {
     return flatRef.current.findIndex((f) => f.itemIdx === ii && f.stepIdx === si);
@@ -89,12 +134,10 @@ export function useTtsQueue() {
       setItems((prev) => {
         const next = [...prev, item];
         if (autoPlay) {
-          // schedule play after state settles
           setTimeout(() => {
             const newIi = next.length - 1;
             setCurrentItemIdx(newIi);
             setStepIdx(0);
-            // rebuild flat synchronously
             const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
             next.forEach((it, i) => it.steps.forEach((s, j) => flat.push({ itemIdx: i, stepIdx: j, text: s })));
             flatRef.current = flat;
@@ -107,19 +150,19 @@ export function useTtsQueue() {
     [playFrom],
   );
 
-  const speakNow = useCallback(
-    (text: string) => {
-      speak(text);
-    },
-    [speak],
-  );
+  const speakNow = useCallback((text: string) => speak(text), [speak]);
 
   const stop = useCallback(() => {
     manualStopRef.current = true;
-    if (typeof window !== "undefined") window.speechSynthesis.cancel();
-    silentAudioRef.current?.pause();
+    tokenRef.current++;
+    try {
+      audioRef.current?.pause();
+      if (audioRef.current) audioRef.current.currentTime = 0;
+    } catch { /* ignore */ }
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
     setSpeaking(false);
-
   }, []);
 
   const next = useCallback(() => {
@@ -134,7 +177,6 @@ export function useTtsQueue() {
   const prev = useCallback(() => {
     const k = findFlatIdx(currentItemIdx, stepIdx);
     if (k <= 0) {
-      // replay current
       stop();
       setTimeout(() => playFrom(currentItemIdx, stepIdx), 80);
       return;
@@ -150,7 +192,7 @@ export function useTtsQueue() {
     setTimeout(() => playFrom(currentItemIdx, stepIdx), 80);
   }, [currentItemIdx, stepIdx, stop, playFrom]);
 
-  // Media Session for lock-screen / earbud controls
+  // Media Session — lock-screen / earbud / Bluetooth-ring controls
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
@@ -162,11 +204,7 @@ export function useTtsQueue() {
     });
     ms.playbackState = speaking ? "playing" : "paused";
     const bind = (action: MediaSessionAction, fn: () => void) => {
-      try {
-        ms.setActionHandler(action, fn);
-      } catch {
-        /* unsupported */
-      }
+      try { ms.setActionHandler(action, fn); } catch { /* unsupported */ }
     };
     bind("play", replay);
     bind("pause", stop);

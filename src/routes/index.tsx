@@ -353,12 +353,54 @@ function Index() {
     setStatus("Class guide loaded. The next picture will use this material.");
   };
 
+  // Client-side downscale → JPEG base64. Keeps long edge ≤ maxEdge so the
+  // payload stays small but text is still sharp enough for the OCR pass.
+  const fileToBase64 = async (file: File, maxEdge = 1600, quality = 0.85): Promise<string> => {
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    const img: HTMLImageElement = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    const scale = Math.min(1, maxEdge / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas 2d unsupported");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    const jpeg = canvas.toDataURL("image/jpeg", quality);
+    return jpeg.split(",")[1] ?? "";
+  };
+
+  const onPickPhoto = async (file: File | null, useProModel = false) => {
+    if (!file) return;
+    try {
+      setStatus("Compressing photo…");
+      const b64 = await fileToBase64(file);
+      await handleCapture({ image_b64: b64 }, useProModel ? "pro" : "flash");
+    } catch (e) {
+      setError(`Photo upload failed: ${(e as Error).message}`);
+    }
+  };
+
   const testCapture = async () => {
     // fake test pixel so user can try without esp32
     const dummy =
       "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AB//Z";
     await handleCapture({ image_b64: dummy });
   };
+
 
   const currentItem = tts.items[tts.currentItemIdx];
   const currentStep = currentItem?.steps?.[tts.stepIdx];

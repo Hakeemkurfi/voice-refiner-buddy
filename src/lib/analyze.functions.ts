@@ -267,7 +267,7 @@ async function kimiVerify(parsed: Parsed, contextText?: string): Promise<Parsed>
 }
 
 
-function finalize(parsed: Parsed, modelUsed: string, escalated: boolean, framesUsed: number) {
+function finalize(parsed: Parsed, modelUsed: string, escalated: boolean, framesUsed: number, kimiVerified = false) {
   const steps = (parsed.steps ?? []).filter(
     (s) => typeof s === "string" && s.trim().length > 0,
   );

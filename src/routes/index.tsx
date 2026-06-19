@@ -457,6 +457,54 @@ function Index() {
         </Card>
 
         <Card className="p-4">
+          <div className="flex items-start gap-3 mb-3">
+            <Camera className="h-5 w-5 text-primary mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <h2 className="font-semibold text-sm">📷 Snap or upload a photo (test without ESP32)</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Use your phone camera or pick a photo from the gallery. Same AI pipeline as the ESP32 —
+                great for testing voice quality and step-by-step dictation.
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent">
+              <Camera className="h-4 w-4" />
+              Take photo
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                disabled={busy}
+                onChange={(e) => {
+                  onPickPhoto(e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <label className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent">
+              <Layers className="h-4 w-4" />
+              Upload from gallery
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={busy}
+                onChange={(e) => {
+                  onPickPhoto(e.target.files?.[0] ?? null);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          </div>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Auto-resized to ~1600 px JPEG, sent to Gemini, then cross-checked by Kimi for math accuracy
+            and listenable steps.
+          </p>
+        </Card>
+
+        <Card className="p-4">
           <h2 className="font-semibold text-sm mb-2">🔵 Bluetooth ring remote</h2>
           <p className="text-xs text-muted-foreground mb-2">
             Pair the ring with this phone/laptop as a Bluetooth keyboard (the ring's M button cycles modes — pick the one
@@ -471,9 +519,13 @@ function Index() {
             <li><b>M</b> (Enter) — Tell ESP32 to take a NEW capture</li>
           </ul>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Tip: tap "Enable audio" once before locking the screen so the OS keeps the media-key bridge alive.
+            To confirm pairing: open phone Bluetooth settings → the ring should show as <b>Connected</b> (name usually
+            "AB Shutter", "BR100" or similar). Press any ring button while focused on this page — if you see "Ring …"
+            text in the bridge status above, the pairing is live. If nothing happens, re-pair the ring and toggle its
+            M-mode until the page reacts.
           </p>
         </Card>
+
 
 
 

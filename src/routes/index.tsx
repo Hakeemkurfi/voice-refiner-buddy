@@ -92,8 +92,11 @@ function Index() {
   ) => {
     setBusy(true);
     setError(null);
-    if (arg.image_b64) setLastImage(arg.image_b64);
+    // Fresh paper → wipe the old blurry image, extracted text and model badge
+    // so the UI only ever shows the CURRENT problem.
+    setLastImage(arg.image_b64 ?? null);
     setExtracted("");
+    setUsedModel("");
     sayStatus(
       arg.burst_id
         ? "Burst received. Reading the sharpest frames now."
@@ -110,7 +113,21 @@ function Index() {
           model,
         },
       });
+
+      // If a previous problem was already on screen, give the listener a 5-second
+      // buffer + a spoken heads-up before the next one starts reading.
+      if (hasPriorResultRef.current) {
+        stopTts();
+        sayStatus("New problem ready. Starting in 5 seconds.");
+        for (let s = 5; s >= 1; s--) {
+          setNextInCountdown(s);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        setNextInCountdown(0);
+      }
+
       addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
+      hasPriorResultRef.current = true;
       setExtracted(out.extractedText ?? "");
       setUsedModel(
         out.framesUsed > 1
@@ -136,7 +153,8 @@ function Index() {
     } finally {
       setBusy(false);
     }
-  }, [addItem, analyze, sayStatus]);
+  }, [addItem, analyze, sayStatus, stopTts]);
+
 
   const processEvent = useCallback(
     (row: EventRow, source: string) => {

@@ -70,10 +70,13 @@ function Index() {
   >([]);
   const seenRef = useRef<Set<string>>(new Set());
   const contextRef = useRef("");
+  const hasPriorResultRef = useRef(false);
+  const [nextInCountdown, setNextInCountdown] = useState(0);
 
   useEffect(() => {
     contextRef.current = contextText;
   }, [contextText]);
+
 
   const sayStatus = useCallback(
     (message: string) => {
@@ -89,8 +92,11 @@ function Index() {
   ) => {
     setBusy(true);
     setError(null);
-    if (arg.image_b64) setLastImage(arg.image_b64);
+    // Fresh paper → wipe the old blurry image, extracted text and model badge
+    // so the UI only ever shows the CURRENT problem.
+    setLastImage(arg.image_b64 ?? null);
     setExtracted("");
+    setUsedModel("");
     sayStatus(
       arg.burst_id
         ? "Burst received. Reading the sharpest frames now."
@@ -107,7 +113,21 @@ function Index() {
           model,
         },
       });
+
+      // If a previous problem was already on screen, give the listener a 5-second
+      // buffer + a spoken heads-up before the next one starts reading.
+      if (hasPriorResultRef.current) {
+        stopTts();
+        sayStatus("New problem ready. Starting in 5 seconds.");
+        for (let s = 5; s >= 1; s--) {
+          setNextInCountdown(s);
+          await new Promise((r) => setTimeout(r, 1000));
+        }
+        setNextInCountdown(0);
+      }
+
       addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, true);
+      hasPriorResultRef.current = true;
       setExtracted(out.extractedText ?? "");
       setUsedModel(
         out.framesUsed > 1
@@ -133,7 +153,8 @@ function Index() {
     } finally {
       setBusy(false);
     }
-  }, [addItem, analyze, sayStatus]);
+  }, [addItem, analyze, sayStatus, stopTts]);
+
 
   const processEvent = useCallback(
     (row: EventRow, source: string) => {
@@ -448,6 +469,11 @@ function Index() {
             <div className="flex-1 min-w-0">
               <p className="font-medium text-sm">Bridge status</p>
               <p className="text-xs text-muted-foreground mt-1">{status}</p>
+              {nextInCountdown > 0 && (
+                <p className="mt-2 inline-flex items-center gap-2 rounded-md bg-primary/10 text-primary px-2 py-1 text-xs font-semibold">
+                  ⏱ Next problem starts in {nextInCountdown}s…
+                </p>
+              )}
             </div>
             <Button size="sm" variant="outline" onClick={checkServer} className="gap-1">
               <RefreshCw className="h-3 w-3" />
@@ -455,6 +481,7 @@ function Index() {
             </Button>
           </div>
         </Card>
+
 
         <Card className="p-4">
           <div className="flex items-start gap-3 mb-3">

@@ -15,7 +15,7 @@ export function useTtsQueue() {
   // 0.9 = calm, conversational tutor pace. User asked for ~50% slower than the
   // robotic SpeechSynthesis default; with the OpenAI voice 0.9 sounds natural
   // and very dictation-friendly.
-  const [rate, setRate] = useState(0.9);
+  const [rate, setRate] = useState(1.0);
   const [voice] = useState<string>("sage");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);

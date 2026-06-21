@@ -289,22 +289,9 @@ async function kimiVerify(parsed: Parsed, contextText?: string): Promise<Parsed>
   if (!res.ok) return parsed;
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const content = json.choices?.[0]?.message?.content ?? "";
-  try {
-    const out = JSON.parse(content) as Parsed;
-    if (Array.isArray(out.steps) && out.steps.length > 0) return out;
-    return parsed;
-  } catch {
-    const m = content.match(/\{[\s\S]*\}/);
-    if (m) {
-      try {
-        const out = JSON.parse(m[0]) as Parsed;
-        if (Array.isArray(out.steps) && out.steps.length > 0) return out;
-      } catch {
-        /* ignore */
-      }
-    }
-    return parsed;
-  }
+  const out = safeParseJsonObject(content);
+  if (out && Array.isArray(out.steps) && out.steps.length > 0) return out;
+  return parsed;
 }
 
 

@@ -102,12 +102,51 @@ async function callGateway(
 
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const content = json.choices?.[0]?.message?.content ?? "{}";
+  const parsed = safeParseJsonObject(content);
+  return parsed ?? { steps: [content.slice(0, 500)] };
+}
+
+// Gemini sometimes returns a JSON object followed by extra prose (markdown,
+// "```json" fences, a second object, etc.) which breaks JSON.parse with
+// "Unexpected non-whitespace character after JSON at position N". Walk through
+// braces and return the first balanced object that parses cleanly.
+function safeParseJsonObject(raw: string): Parsed | null {
+  if (!raw) return null;
+  let s = raw.trim();
+  // strip ```json ... ``` fences
+  s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
   try {
-    return JSON.parse(content);
+    return JSON.parse(s) as Parsed;
   } catch {
-    const m = content.match(/\{[\s\S]*\}/);
-    return m ? JSON.parse(m[0]) : { steps: [content] };
+    /* fall through */
   }
+  const start = s.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(s.slice(start, i + 1)) as Parsed;
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
 }
 
 function isWeakResult(p: Parsed): boolean {

@@ -540,8 +540,8 @@ function Index() {
             </label>
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Auto-resized to ~1600 px JPEG, sent to Gemini, then cross-checked by Kimi for math accuracy
-            and listenable steps.
+            Auto-resized to ~1600 px JPEG, solved with the main vision model first; Kimi is only used
+            as a backup if the main AI route is unavailable.
           </p>
         </Card>
 

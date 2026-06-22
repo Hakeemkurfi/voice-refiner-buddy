@@ -610,8 +610,8 @@ bool connectRingBle() {
   }
   Serial.printf("[ring] connecting to S10 HID at %s...\n", ringDevice->getAddress().toString().c_str());
   ringClient = BLEDevice::createClient();
-  ringClient->setClientCallbacks(new RingClientCallbacks(), true);
-  if (!ringClient->connect(ringDevice, false)) {
+  ringClient->setClientCallbacks(new RingClientCallbacks());
+  if (!ringClient->connect(ringDevice)) {
     Serial.println("[ring] connect failed — if phone shows Pair popup, tap Cancel and keep S10 unpaired from phone");
     delete ringClient;
     ringClient = nullptr;

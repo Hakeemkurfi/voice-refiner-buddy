@@ -278,6 +278,7 @@ void handleLocalRoot() {
   page += "<script>setInterval(()=>{live.src='/jpg?ts='+Date.now()},900)</script>";
   page += "<p><a href='/capture'><button style='font-size:18px;padding:12px 18px'>Capture and send to app</button></a></p>";
   page += "<p><a href='/ping'><button style='font-size:16px;padding:10px 14px'>Test app server</button></a> ";
+  page += "<a href='/burst'><button style='font-size:16px;padding:10px 14px'>Slow sweep burst</button></a> ";
   page += "<a href='/next'><button style='font-size:16px;padding:10px 14px'>Next</button></a> ";
   page += "<a href='/prev'><button style='font-size:16px;padding:10px 14px'>Prev</button></a></p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
@@ -325,6 +326,7 @@ void startLocalDashboard() {
   localServer.on("/", handleLocalRoot);
   localServer.on("/jpg", handleLocalJpg);
   localServer.on("/capture", handleLocalCapture);
+  localServer.on("/burst", []() { bool ok = runBurst(); localServer.send(200, "text/html", String("<p>") + (ok ? "Burst sent to app." : "Burst failed. Check Serial Monitor.") + "</p><p><a href='/'>Back</a></p>"); });
   localServer.on("/ping", handleLocalPing);
   localServer.on("/next", []() { bool ok = postCommand("next"); localServer.send(200, "text/html", String("<p>") + (ok ? "Next sent." : "Next failed.") + "</p><p><a href='/'>Back</a></p>"); });
   localServer.on("/prev", []() { bool ok = postCommand("prev"); localServer.send(200, "text/html", String("<p>") + (ok ? "Prev sent." : "Prev failed.") + "</p><p><a href='/'>Back</a></p>"); });
@@ -937,7 +939,7 @@ void setup() {
   connectWifi();
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   initRingBle();
-  Serial.println("Ready. Serial: 'ping' / 'cap' / 'next' / 'prev' / 'ring' / 'af' / 'audit'.");
+  Serial.println("Ready. Serial: 'ping' / 'cap' / 'burst' / 'next' / 'prev' / 'ring' / 'af' / 'audit'.");
 }
 
 void printAudit() {

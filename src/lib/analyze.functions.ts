@@ -16,6 +16,17 @@ type Parsed = {
   confidence?: number;
 };
 
+class AiGatewayCreditError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiGatewayCreditError";
+  }
+}
+
+function isAiGatewayCreditError(error: unknown): error is AiGatewayCreditError {
+  return error instanceof AiGatewayCreditError;
+}
+
 const SYSTEM_PROMPT = `You are an elite OCR engine AND a calm, patient tutor for math, physics, chemistry, biology, and reading. You receive ONE OR MORE photos taken by a fixed-focus ESP32 OV3660 camera of the SAME A4 page, notebook, whiteboard, screen or textbook. When you receive multiple images, they are different frames of the SAME document captured over a few seconds — your job is to MERGE the text across all frames, taking the clearest reading of each character from whichever frame shows it best. Frames may be slightly blurry, slightly tilted, dim, low-contrast, perspective-skewed, or unevenly lit — DO NOT give up.
 
 The page MAY contain any combination of: printed text, handwritten notes, mathematical expressions (algebra, calculus, matrices, fractions, exponents, integrals, sums, limits, derivatives, series), graphs, function plots, geometry diagrams, tables, multi-column layouts, exam questions with multiple parts (1a, 1b, 2…).
@@ -96,7 +107,11 @@ async function callGateway(
   if (!res.ok) {
     const text = await res.text();
     if (res.status === 429) throw new Error("Rate limited. Try again in a moment.");
-    if (res.status === 402) throw new Error("AI credits exhausted. Add credits in workspace billing.");
+    if (res.status === 402) {
+      throw new AiGatewayCreditError(
+        "Workspace AI credits are temporarily unavailable for image analysis.",
+      );
+    }
     throw new Error(`AI error ${res.status}: ${text.slice(0, 300)}`);
   }
 
@@ -104,6 +119,64 @@ async function callGateway(
   const content = json.choices?.[0]?.message?.content ?? "{}";
   const parsed = safeParseJsonObject(content);
   return parsed ?? { steps: [content.slice(0, 500)] };
+}
+
+async function callKimiVision(data: { images_b64: string[]; contextText?: string }): Promise<Parsed> {
+  const kimiKey = process.env.KIMI_API_KEY;
+  if (!kimiKey) {
+    throw new Error("Kimi fallback is not configured yet.");
+  }
+
+  const imageBlocks = data.images_b64.map((b64) => ({
+    type: "image_url" as const,
+    image_url: { url: `data:image/jpeg;base64,${b64}` },
+  }));
+
+  const body = {
+    model: "kimi-k2.6",
+    temperature: 0.1,
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          ...imageBlocks,
+          {
+            type: "text" as const,
+            text:
+              `${data.images_b64.length > 1 ? `I am giving you ${data.images_b64.length} frames of the SAME page. Merge the text across all frames.` : "OCR this image FIRST, then solve or explain it fully."}` +
+              `${data.contextText?.trim() ? `\n\nClass material to follow:\n${data.contextText.trim()}` : ""}`,
+          },
+        ],
+      },
+    ],
+  };
+
+  const res = await fetch("https://api.moonshot.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${kimiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    if (res.status === 402) {
+      throw new Error("Kimi fallback also asked for account top-up, so image analysis could not continue.");
+    }
+    if (res.status === 401) {
+      throw new Error("Kimi fallback rejected the saved API key. Please update the Kimi key securely.");
+    }
+    throw new Error(`Kimi fallback failed ${res.status}: ${text.slice(0, 240)}`);
+  }
+
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const content = json.choices?.[0]?.message?.content ?? "";
+  const parsed = safeParseJsonObject(content);
+  if (parsed && Array.isArray(parsed.steps) && parsed.steps.length > 0) return parsed;
+  return { title: "Kimi result", steps: [content.slice(0, 500)], extractedText: "", confidence: 0.5 };
 }
 
 // Gemini sometimes returns a JSON object followed by extra prose (markdown,
@@ -216,37 +289,45 @@ export const analyzeImage = createServerFn({ method: "POST" })
 
     const payload = { images_b64, contextText: data.contextText };
 
-    if (mode === "flash") {
-      const p = await callGateway(flashId, payload, key);
-      return finalize(p, flashId, false, images_b64.length);
-    }
-    if (mode === "pro") {
-      const p = await callGateway(proId, payload, key);
-      return finalize(p, proId, false, images_b64.length);
-    }
-
-    // AUTO
-    let used = flashId;
-    let result = await callGateway(flashId, payload, key);
-    let escalated = false;
-    if (isWeakResult(result)) {
-      try {
-        const proResult = await callGateway(proId, payload, key);
-        const flashLen = (result.extractedText ?? "").trim().length;
-        const proLen = (proResult.extractedText ?? "").trim().length;
-        if (proLen >= flashLen) {
-          result = proResult;
-          used = proId;
-          escalated = true;
-        }
-      } catch {
-        /* keep flash */
+    try {
+      if (mode === "flash") {
+        const p = await callGateway(flashId, payload, key);
+        return finalize(p, flashId, false, images_b64.length);
       }
-    }
+      if (mode === "pro") {
+        const p = await callGateway(proId, payload, key);
+        return finalize(p, proId, false, images_b64.length);
+      }
 
-    // Kimi verification pass — cross-check math & step quality (text-only, fast)
-    const verified = await kimiVerify(result, data.contextText).catch(() => result);
-    return finalize(verified, used, escalated, images_b64.length, verified !== result);
+      // AUTO: start cheap/fast, only escalate when the reading is weak.
+      let used = flashId;
+      let result = await callGateway(flashId, payload, key);
+      let escalated = false;
+      if (isWeakResult(result)) {
+        try {
+          const proResult = await callGateway(proId, payload, key);
+          const flashLen = (result.extractedText ?? "").trim().length;
+          const proLen = (proResult.extractedText ?? "").trim().length;
+          if (proLen >= flashLen) {
+            result = proResult;
+            used = proId;
+            escalated = true;
+          }
+        } catch {
+          /* keep flash */
+        }
+      }
+
+      // Do not run Kimi on every request; keep it as a fallback so we avoid
+      // unnecessary extra accounts/credits during normal captures.
+      return finalize(result, used, escalated, images_b64.length, false);
+    } catch (error) {
+      if (isAiGatewayCreditError(error)) {
+        const fallback = await callKimiVision(payload);
+        return finalize(fallback, "kimi-k2.6 fallback", false, images_b64.length, false);
+      }
+      throw error;
+    }
   });
 
 const KIMI_VERIFIER_PROMPT = `You are a meticulous math/physics grader and TTS-script editor. You will receive a JSON object produced by another AI that solved a problem from a student's photo, plus the verbatim text the OCR engine read off the page. Your job:

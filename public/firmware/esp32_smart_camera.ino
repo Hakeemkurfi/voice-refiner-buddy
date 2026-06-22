@@ -555,35 +555,74 @@ void printRingStatus() {
 }
 
 
+// Debounce repeats from S10 — it auto-repeats while button is held.
+static uint32_t lastRingHash = 0;
+static unsigned long lastRingHashAt = 0;
+static bool ringFire(const char* action) {
+  ringAction(action);
+  return true;
+}
+
 void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");
   for (size_t i = 0; i < len; i++) Serial.printf(" %02X", d[i]);
   Serial.println();
   if (len == 0) return;
+
   bool anyPressed = false;
   for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
-  if (!anyPressed) return; // release report
+  if (!anyPressed) { lastRingHash = 0; return; } // release report
+
+  // Modifier-only keyboard report (e.g. 08 00 00 00 = LeftGUI alone). Ignore;
+  // it's the prefix the S10 sends just before a media shortcut.
+  if (len >= 4 && d[1] == 0x00 && d[2] == 0x00 && d[3] == 0x00) return;
+
+  // Hash full report to debounce ~250ms of HID auto-repeat.
+  uint32_t h = 0;
+  for (size_t i = 0; i < len; i++) h = (h * 131) ^ d[i];
+  if (h == lastRingHash && millis() - lastRingHashAt < 350) return;
+  lastRingHash = h; lastRingHashAt = millis();
+
+  // S10 4-byte vendor reports captured from this unit (prefix 0F EF / 00 F4):
+  //   0F EF 01 37 -> M button (capture)
+  //   0F EF 81 16 -> next
+  //   0F EF 41 15 -> prev
+  //   0F EF 01 14 -> replay
+  //   00 F4 01 19 -> stop / play-pause
+  if (len >= 4 && ((d[0] == 0x0F && d[1] == 0xEF) || (d[0] == 0x00 && d[1] == 0xF4))) {
+    uint16_t tail = (uint16_t(d[2]) << 8) | d[3];
+    switch (tail) {
+      case 0x0137: ringFire("capture"); return;
+      case 0x8116: ringFire("next");    return;
+      case 0x4115: ringFire("prev");    return;
+      case 0x0114: ringFire("replay");  return;
+      case 0x0119: ringFire("stop");    return;
+      default: break;
+    }
+  }
+
+  // Standard HID keyboard report (8 bytes: mods, reserved, 6 keys).
   if (len >= 3) {
     for (size_t i = 2; i < len; i++) {
       switch (d[i]) {
-        case 0x28: case 0x10: ringAction("capture"); return; // Enter / M
-        case 0x2C: ringAction("stop"); return;                // Space / play-pause
-        case 0x4F: ringAction("next"); return;                // Right arrow
-        case 0x50: ringAction("prev"); return;                // Left arrow
-        case 0x51: ringAction("single"); return;              // Down arrow = single-shot capture (fallback)
-        case 0x52: ringAction("replay"); return;              // Up arrow
+        case 0x28: case 0x10: ringFire("capture"); return; // Enter / M
+        case 0x2C: ringFire("stop");    return;            // Space
+        case 0x4F: ringFire("next");    return;            // Right
+        case 0x50: ringFire("prev");    return;            // Left
+        case 0x51: ringFire("single");  return;            // Down
+        case 0x52: ringFire("replay");  return;            // Up
       }
     }
   }
+  // 2-byte consumer report
   if (len == 2) {
     uint16_t v = d[0] | (uint16_t(d[1]) << 8);
     switch (v) {
-      case 0x00CD: case 0x0001: ringAction("stop"); break;    // Play/pause variants
-      case 0x00B5: case 0x0080: ringAction("next"); break;
-      case 0x00B6: case 0x0040: ringAction("prev"); break;
-      case 0x00E9: case 0x0010: ringAction("replay"); break;  // Volume up variants
-      case 0x00EA: case 0x0020: ringAction("capture"); break; // Volume down variants
-      default: break;
+      case 0x00CD: case 0x0001: ringFire("stop");    return;
+      case 0x00B5: case 0x0080: ringFire("next");    return;
+      case 0x00B6: case 0x0040: ringFire("prev");    return;
+      case 0x00E9: case 0x0010: ringFire("replay");  return;
+      case 0x00EA: case 0x0020: ringFire("capture"); return;
     }
   }
   Serial.println(">>> [RING BUTTON] unknown S10 code printed above — send me that report line and I will map it <<<");

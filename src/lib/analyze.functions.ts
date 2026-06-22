@@ -289,37 +289,45 @@ export const analyzeImage = createServerFn({ method: "POST" })
 
     const payload = { images_b64, contextText: data.contextText };
 
-    if (mode === "flash") {
-      const p = await callGateway(flashId, payload, key);
-      return finalize(p, flashId, false, images_b64.length);
-    }
-    if (mode === "pro") {
-      const p = await callGateway(proId, payload, key);
-      return finalize(p, proId, false, images_b64.length);
-    }
-
-    // AUTO
-    let used = flashId;
-    let result = await callGateway(flashId, payload, key);
-    let escalated = false;
-    if (isWeakResult(result)) {
-      try {
-        const proResult = await callGateway(proId, payload, key);
-        const flashLen = (result.extractedText ?? "").trim().length;
-        const proLen = (proResult.extractedText ?? "").trim().length;
-        if (proLen >= flashLen) {
-          result = proResult;
-          used = proId;
-          escalated = true;
-        }
-      } catch {
-        /* keep flash */
+    try {
+      if (mode === "flash") {
+        const p = await callGateway(flashId, payload, key);
+        return finalize(p, flashId, false, images_b64.length);
       }
-    }
+      if (mode === "pro") {
+        const p = await callGateway(proId, payload, key);
+        return finalize(p, proId, false, images_b64.length);
+      }
 
-    // Kimi verification pass — cross-check math & step quality (text-only, fast)
-    const verified = await kimiVerify(result, data.contextText).catch(() => result);
-    return finalize(verified, used, escalated, images_b64.length, verified !== result);
+      // AUTO: start cheap/fast, only escalate when the reading is weak.
+      let used = flashId;
+      let result = await callGateway(flashId, payload, key);
+      let escalated = false;
+      if (isWeakResult(result)) {
+        try {
+          const proResult = await callGateway(proId, payload, key);
+          const flashLen = (result.extractedText ?? "").trim().length;
+          const proLen = (proResult.extractedText ?? "").trim().length;
+          if (proLen >= flashLen) {
+            result = proResult;
+            used = proId;
+            escalated = true;
+          }
+        } catch {
+          /* keep flash */
+        }
+      }
+
+      // Do not run Kimi on every request; keep it as a fallback so we avoid
+      // unnecessary extra accounts/credits during normal captures.
+      return finalize(result, used, escalated, images_b64.length, false);
+    } catch (error) {
+      if (isAiGatewayCreditError(error)) {
+        const fallback = await callKimiVision(payload);
+        return finalize(fallback, "kimi-k2.6 fallback", false, images_b64.length, false);
+      }
+      throw error;
+    }
   });
 
 const KIMI_VERIFIER_PROMPT = `You are a meticulous math/physics grader and TTS-script editor. You will receive a JSON object produced by another AI that solved a problem from a student's photo, plus the verbatim text the OCR engine read off the page. Your job:

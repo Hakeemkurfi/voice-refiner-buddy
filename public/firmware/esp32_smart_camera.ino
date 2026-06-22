@@ -272,10 +272,8 @@ void handleLocalRoot() {
   String page = "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>";
   page += "<title>ESP32 Smart Audio Tutor</title><body style='font-family:Arial,sans-serif;margin:20px;line-height:1.4'>";
   page += "<h2>ESP32 Smart Audio Tutor</h2>";
-  page += "<p>If this preview image appears, the camera is working locally.</p>";
-  page += "<p>A4 framing: hold the camera about 25-35 cm above the paper; fill most of the preview with the page.</p>";
-  page += "<img id='live' src='/jpg?ts=" + String(millis()) + "' style='width:100%;max-width:720px;border:1px solid #ccc'>";
-  page += "<script>setInterval(()=>{live.src='/jpg?ts='+Date.now()},900)</script>";
+  page += "<p>Live MJPEG preview below. Hold the camera ~25-35 cm above the A4 page; fill the frame.</p>";
+  page += "<img id='live' src='/stream' style='width:100%;max-width:720px;border:1px solid #ccc'>";
   page += "<p><a href='/capture'><button style='font-size:18px;padding:12px 18px'>Capture and send to app</button></a></p>";
   page += "<p><a href='/ping'><button style='font-size:16px;padding:10px 14px'>Test app server</button></a> ";
   page += "<a href='/burst'><button style='font-size:16px;padding:10px 14px'>Slow sweep burst</button></a> ";
@@ -295,6 +293,43 @@ static inline bool isCompleteJpeg(const uint8_t* buf, size_t len) {
   if (buf[0] != 0xFF || buf[1] != 0xD8) return false;
   if (buf[len - 2] != 0xFF || buf[len - 1] != 0xD9) return false;
   return true;
+}
+
+// Drop sensor down to SVGA for fast preview, then restore QXGA. Keeps capture
+// crisp while making /stream feel real-time (~10-15 fps on Wi-Fi).
+static void previewSetSize(framesize_t fs) {
+  sensor_t* s = esp_camera_sensor_get();
+  if (s) s->set_framesize(s, fs);
+}
+
+void handleLocalStream() {
+  WiFiClient client = localServer.client();
+  if (!client) return;
+  const char* boundary = "frame";
+  client.print("HTTP/1.1 200 OK\r\n");
+  client.printf("Content-Type: multipart/x-mixed-replace;boundary=%s\r\n", boundary);
+  client.print("Cache-Control: no-store\r\nConnection: close\r\n\r\n");
+
+  previewSetSize(FRAMESIZE_SVGA);   // 800x600 streams smoothly
+  unsigned long started = millis();
+  while (client.connected() && millis() - started < 120000) { // 2 min cap
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (!fb) { delay(20); continue; }
+    if (!isCompleteJpeg(fb->buf, fb->len)) { esp_camera_fb_return(fb); continue; }
+    client.printf("--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
+                  boundary, (unsigned)fb->len);
+    size_t sent = 0;
+    while (sent < fb->len && client.connected()) {
+      size_t w = client.write(fb->buf + sent, fb->len - sent);
+      if (w == 0) { delay(2); continue; }
+      sent += w;
+    }
+    client.print("\r\n");
+    esp_camera_fb_return(fb);
+    delay(1); // yield
+  }
+  previewSetSize(FRAMESIZE_QXGA);   // restore high-res for captures
+  client.stop();
 }
 
 void handleLocalJpg() {
@@ -325,6 +360,7 @@ void handleLocalPing() {
 void startLocalDashboard() {
   localServer.on("/", handleLocalRoot);
   localServer.on("/jpg", handleLocalJpg);
+  localServer.on("/stream", handleLocalStream);
   localServer.on("/capture", handleLocalCapture);
   localServer.on("/burst", []() { bool ok = runBurst(); localServer.send(200, "text/html", String("<p>") + (ok ? "Burst sent to app." : "Burst failed. Check Serial Monitor.") + "</p><p><a href='/'>Back</a></p>"); });
   localServer.on("/ping", handleLocalPing);

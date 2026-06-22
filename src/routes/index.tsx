@@ -546,25 +546,59 @@ function Index() {
         </Card>
 
         <Card className="p-4">
-          <h2 className="font-semibold text-sm mb-2">🔵 Bluetooth ring remote</h2>
+          <h2 className="font-semibold text-sm mb-2">🔵 S10 Bluetooth Ring Remote</h2>
           <p className="text-xs text-muted-foreground mb-2">
-            Pair the ring with this phone/laptop as a Bluetooth keyboard (the ring's M button cycles modes — pick the one
-            that sends arrow keys). This page listens globally; the controls work even with the screen locked.
+            Your S10 ring (<code className="bg-muted px-1 rounded">71:96:80:fc:c3:26</code>) connects
+            <b> directly to the ESP32</b> over BLE — the phone does NOT need to be paired.
+            Unpair it from your phone first, then hold the ring's power button until the LED flashes;
+            the ESP32 will connect automatically within ~8 seconds.
           </p>
-          <ul className="text-xs space-y-1 font-mono">
-            <li><b>▶/❚❚</b> (Space) — Stop / Resume speech</li>
-            <li><b>▲</b> (Up / VolumeUp) — Replay last answer</li>
-            <li><b>▼</b> (Down / VolumeDown) — Re-analyze last image with Pro</li>
-            <li><b>◀</b> (Left) — Previous step / capture</li>
-            <li><b>▶</b> (Right) — Next step / capture</li>
-            <li><b>M</b> (Enter) — Tell ESP32 to take a NEW capture</li>
-          </ul>
-          <p className="text-[10px] text-muted-foreground mt-2">
-            To confirm pairing: open phone Bluetooth settings → the ring should show as <b>Connected</b> (name usually
-            "AB Shutter", "BR100" or similar). Press any ring button while focused on this page — if you see "Ring …"
-            text in the bridge status above, the pairing is live. If nothing happens, re-pair the ring and toggle its
-            M-mode until the page reacts.
-          </p>
+
+          {/* S10 Button Map */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+            <div className="rounded-md border bg-muted/30 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">ESP32 side (hardware buttons)</p>
+              <ul className="text-xs space-y-1.5 font-mono">
+                <li><span className="inline-block w-20 font-bold text-primary">M / Shutter</span> → 📸 Capture photo</li>
+                <li><span className="inline-block w-20 font-bold text-primary">▲ Up</span> → 🔁 Replay step</li>
+                <li><span className="inline-block w-20 font-bold text-primary">◀ Left</span> → ⏮ Previous step</li>
+                <li><span className="inline-block w-20 font-bold text-primary">▶ Right</span> → ⏭ Next step</li>
+                <li><span className="inline-block w-20 font-bold text-primary">▼ Down</span> → ⏹ Stop speech</li>
+              </ul>
+            </div>
+            <div className="rounded-md border bg-muted/30 p-3">
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Phone/laptop side (keyboard mode)</p>
+              <ul className="text-xs space-y-1.5 font-mono">
+                <li><span className="inline-block w-20 font-bold">M / Enter</span> → 📸 Tell ESP32 capture</li>
+                <li><span className="inline-block w-20 font-bold">▲ / Vol+</span> → 🔁 Replay step</li>
+                <li><span className="inline-block w-20 font-bold">◀ Left</span> → ⏮ Previous step</li>
+                <li><span className="inline-block w-20 font-bold">▶ Right</span> → ⏭ Next step</li>
+                <li><span className="inline-block w-20 font-bold">Space</span> → ⏹ Stop / resume</li>
+              </ul>
+            </div>
+          </div>
+
+          {/* Calibration guide */}
+          <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+            <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-1">🔧 Not sure which button does what?</p>
+            <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-4">
+              <li>Open Serial Monitor in Arduino IDE at <code className="bg-background px-1 rounded">115200</code> baud</li>
+              <li>Type <code className="bg-background px-1 rounded">calibrate</code> → buttons become <b>safe</b> (no actions fire)</li>
+              <li>Press each ring button one at a time → Serial Monitor shows the action name</li>
+              <li>Type <code className="bg-background px-1 rounded">calibrate</code> again to go back to live mode</li>
+            </ol>
+          </div>
+
+          {/* Lock screen note */}
+          <div className="mt-3 rounded-md border bg-muted/20 p-3">
+            <p className="text-xs font-semibold mb-1">🔒 Lock-screen audio (iOS &amp; Android)</p>
+            <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-4">
+              <li>Tap <b>Enable audio</b> at the top of this page once (required by the browser)</li>
+              <li>Connect your Bluetooth earbuds to your phone</li>
+              <li>Lock the phone screen — speech will keep playing through earbuds</li>
+              <li>Ring buttons control playback from the lock screen via the MediaSession API</li>
+            </ol>
+          </div>
         </Card>
 
 

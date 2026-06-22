@@ -617,6 +617,7 @@ static BLEAdvertisedDevice* ringDevice  = nullptr;
 static BLEClient*           ringClient  = nullptr;
 static bool   ringConnected             = false;
 static bool   ringScanRunning           = false;
+static bool   calibrateMode            = false;  // safe mode: prints action, does NOT execute
 static unsigned long lastBleScan        = 0;
 static unsigned long lastRingAction     = 0;
 static unsigned long lastRingConnectAttempt = 0;
@@ -642,6 +643,23 @@ void configureRingSecurity() {
 void ringAction(const char* action) {
   if (millis() - lastRingAction < 450) return;
   lastRingAction = millis();
+
+  if (calibrateMode) {
+    // CALIBRATE MODE — print only, never execute. Safe to press all buttons.
+    Serial.println();
+    Serial.println("╔══════════════════════════════════════╗");
+    Serial.printf( "║  CALIBRATE: button action = %-8s║\n", action);
+    Serial.println("╚══════════════════════════════════════╝");
+    if      (!strcmp(action, "capture")) Serial.println("  -> Would take a PHOTO & send to app");
+    else if (!strcmp(action, "next"))    Serial.println("  -> Would read NEXT step aloud");
+    else if (!strcmp(action, "prev"))    Serial.println("  -> Would read PREVIOUS step aloud");
+    else if (!strcmp(action, "replay"))  Serial.println("  -> Would REPLAY current step");
+    else if (!strcmp(action, "stop"))    Serial.println("  -> Would STOP/PAUSE speech");
+    else if (!strcmp(action, "burst"))   Serial.println("  -> Would take a BURST (slow pan)");
+    Serial.println("  (type 'calibrate' again to exit and activate buttons)");
+    return;
+  }
+
   Serial.printf("\n>>> [RING BUTTON] %s  (BLE connected=%s) <<<\n",
                 action, ringConnected ? "YES" : "NO");
   if      (!strcmp(action, "capture")) captureAndSend();
@@ -654,14 +672,25 @@ void ringAction(const char* action) {
 }
 
 void printRingStatus() {
-  Serial.println("---- RING / BLE STATUS ----");
+  Serial.println("---- S10 RING / BLE STATUS ----");
   Serial.printf("  BLE feature compiled in : %s\n", "YES");
+  Serial.printf("  Ring target (hint)      : \"%s\"\n", RING_NAME_HINT);
   Serial.printf("  Ring device discovered  : %s\n", ringDevice    ? "YES" : "no");
   Serial.printf("  Ring BLE connected      : %s\n", ringConnected ? "YES" : "no");
   Serial.printf("  Scan in progress        : %s\n", ringScanRunning ? "yes" : "no");
   Serial.printf("  Last button (ms ago)    : %lu\n",
                 lastRingAction == 0 ? 0UL : (millis() - lastRingAction));
-  Serial.println("---------------------------");
+  Serial.printf("  Calibrate mode          : %s\n", calibrateMode ? "ON (buttons safe)" : "OFF (buttons live)");
+  Serial.println();
+  Serial.println("  S10 Button Map (type 'calibrate' to identify yours):");
+  Serial.println("  ┌─────────────────────────────────┐");
+  Serial.println("  │  [▲ Up]      → REPLAY step      │");
+  Serial.println("  │  [◀ Left]    → PREV step        │");
+  Serial.println("  │  [▶ Right]   → NEXT step        │");
+  Serial.println("  │  [▼ Down]    → STOP / pause     │");
+  Serial.println("  │  [M / Shtr]  → CAPTURE photo    │");
+  Serial.println("  └─────────────────────────────────┘");
+  Serial.println("-------------------------------");
 }
 
 static uint32_t lastRingHash   = 0;
@@ -1136,7 +1165,8 @@ void setup() {
   connectWifi();
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   initRingBle();
-  Serial.println("Ready. Serial: ping / cap / burst / next / prev / ring / af / audit");
+  Serial.println("Ready. Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate");
+  Serial.println("TIP: type 'calibrate' to safely identify which S10 button does what.");
 }
 
 void printAudit() {
@@ -1180,8 +1210,25 @@ void handleSerial() {
         Serial.println(ov5640TriggerAf(s, 900) ? "✓ AF locked" : "✗ AF failed");
       }
       else if (line.equalsIgnoreCase("audit")) { printAudit(); }
+      else if (line.equalsIgnoreCase("calibrate")) {
+        calibrateMode = !calibrateMode;
+        if (calibrateMode) {
+          Serial.println();
+          Serial.println("╔════════════════════════════════════════════╗");
+          Serial.println("║  CALIBRATE MODE ON — buttons are SAFE now  ║");
+          Serial.println("║  Press each ring button one at a time.     ║");
+          Serial.println("║  Serial Monitor will show its action name. ║");
+          Serial.println("║  Type 'calibrate' again when done.         ║");
+          Serial.println("╚════════════════════════════════════════════╝");
+          printRingStatus();
+        } else {
+          Serial.println("╔═════════════════════════════════════╗");
+          Serial.println("║  CALIBRATE MODE OFF — buttons LIVE  ║");
+          Serial.println("╚═════════════════════════════════════╝");
+        }
+      }
       else if (line.length() > 0)              {
-        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit)\n",
+        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate)\n",
                       line.c_str());
       }
       line = "";

@@ -713,6 +713,9 @@ bool runBurst() {
     Serial.printf("  [burst] locked AEC=%d AGC=%d\n", aec, gain);
     delay(80);
   }
+  // OV5640: run a single-shot AF cycle BEFORE the burst so every frame in the
+  // burst shares the same sharp lens position.
+  ov5640TriggerAf(s, 1200);
 
   unsigned long t0 = millis();
   int seq = 0;

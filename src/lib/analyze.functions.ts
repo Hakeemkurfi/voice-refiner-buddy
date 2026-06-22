@@ -16,32 +16,23 @@ type Parsed = {
   confidence?: number;
 };
 
-function creditUnavailableResult(detail?: string): Parsed {
+// Returned when the Lovable AI Gateway has no credits — the UI still shows
+// the camera preview image rather than blanking out.
+function creditsUnavailableResult(detail?: string): Parsed {
   return {
     title: "AI credits unavailable",
-    summary: "The picture arrived, but the AI solver cannot run until credits are available.",
+    summary: "The picture arrived but the AI solver cannot run until credits are restored.",
     steps: [
-      "First, your image reached the app, so the camera upload path is working.",
-      "Next, the AI solver is paused because the available AI balance is exhausted or blocked.",
-      "Now, top up the app AI balance, or disable the empty backup provider before trying again.",
+      "First, your image reached the app successfully, so the camera upload path is working.",
+      "Next, the AI solver is paused because the Lovable workspace AI credits are exhausted.",
+      "Now, go to Settings → Workspace → Usage in Lovable and top up the AI credits.",
       detail
-        ? `Finally, the provider message was: ${detail.slice(0, 160)}`
-        : "Finally, try the same capture again after credits are available.",
+        ? `Finally, the provider returned this message: ${detail.slice(0, 200)}`
+        : "Finally, try the same capture again once credits are available.",
     ],
     extractedText: "",
     confidence: 0,
   };
-}
-
-class AiGatewayCreditError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "AiGatewayCreditError";
-  }
-}
-
-function isAiGatewayCreditError(error: unknown): error is AiGatewayCreditError {
-  return error instanceof AiGatewayCreditError;
 }
 
 const SYSTEM_PROMPT = `You are an elite OCR engine AND a calm, patient tutor for math, physics, chemistry, biology, and reading. You receive ONE OR MORE photos taken by a fixed-focus ESP32 OV3660 camera of the SAME A4 page, notebook, whiteboard, screen or textbook. When you receive multiple images, they are different frames of the SAME document captured over a few seconds — your job is to MERGE the text across all frames, taking the clearest reading of each character from whichever frame shows it best. Frames may be slightly blurry, slightly tilted, dim, low-contrast, perspective-skewed, or unevenly lit — DO NOT give up.
@@ -125,9 +116,11 @@ async function callGateway(
     const text = await res.text();
     if (res.status === 429) throw new Error("Rate limited. Try again in a moment.");
     if (res.status === 402) {
-      throw new AiGatewayCreditError(
-        "Workspace AI credits are temporarily unavailable for image analysis.",
-      );
+      // Signal credit exhaustion so caller can return a graceful result.
+      throw Object.assign(new Error("Lovable AI credits are temporarily exhausted."), {
+        isCreditError: true,
+        detail: text.slice(0, 300),
+      });
     }
     throw new Error(`AI error ${res.status}: ${text.slice(0, 300)}`);
   }
@@ -136,72 +129,6 @@ async function callGateway(
   const content = json.choices?.[0]?.message?.content ?? "{}";
   const parsed = safeParseJsonObject(content);
   return parsed ?? { steps: [content.slice(0, 500)] };
-}
-
-async function callKimiVision(data: { images_b64: string[]; contextText?: string }): Promise<Parsed> {
-  const kimiKey = process.env.KIMI_API_KEY;
-  if (!kimiKey) {
-    throw new Error("Kimi fallback is not configured yet.");
-  }
-
-  const imageBlocks = data.images_b64.map((b64) => ({
-    type: "image_url" as const,
-    image_url: { url: `data:image/jpeg;base64,${b64}` },
-  }));
-
-  const body = {
-    model: "kimi-k2.6",
-    temperature: 0.1,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: [
-          ...imageBlocks,
-          {
-            type: "text" as const,
-            text:
-              `${data.images_b64.length > 1 ? `I am giving you ${data.images_b64.length} frames of the SAME page. Merge the text across all frames.` : "OCR this image FIRST, then solve or explain it fully."}` +
-              `${data.contextText?.trim() ? `\n\nClass material to follow:\n${data.contextText.trim()}` : ""}`,
-          },
-        ],
-      },
-    ],
-  };
-
-  const res = await fetch("https://api.moonshot.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${kimiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    const lower = text.toLowerCase();
-    const isBilling =
-      res.status === 402 ||
-      res.status === 401 ||
-      (res.status === 429 &&
-        (lower.includes("insufficient balance") ||
-          lower.includes("suspended") ||
-          lower.includes("recharge") ||
-          lower.includes("balance")));
-    if (isBilling) {
-      throw new Error(
-        "Both AI providers are out of credits right now. Please top up your Lovable AI credits (Settings → Workspace → Usage) to keep analyzing images.",
-      );
-    }
-    throw new Error(`Kimi fallback failed ${res.status}: ${text.slice(0, 240)}`);
-  }
-
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = json.choices?.[0]?.message?.content ?? "";
-  const parsed = safeParseJsonObject(content);
-  if (parsed && Array.isArray(parsed.steps) && parsed.steps.length > 0) return parsed;
-  return { title: "Kimi result", steps: [content.slice(0, 500)], extractedText: "", confidence: 0.5 };
 }
 
 // Gemini sometimes returns a JSON object followed by extra prose (markdown,
@@ -310,11 +237,12 @@ export const analyzeImage = createServerFn({ method: "POST" })
 
     const mode = data.model ?? "auto";
     const flashId = "google/gemini-2.5-flash";
-    const proId = "google/gemini-2.5-pro";
+    const proId   = "google/gemini-2.5-pro";
 
     const payload = { images_b64, contextText: data.contextText };
 
     try {
+      // ---- Explicit model selection ----
       if (mode === "flash") {
         const p = await callGateway(flashId, payload, key);
         return finalize(p, flashId, false, images_b64.length);
@@ -324,106 +252,52 @@ export const analyzeImage = createServerFn({ method: "POST" })
         return finalize(p, proId, false, images_b64.length);
       }
 
-      // AUTO: start cheap/fast, only escalate when the reading is weak.
-      let used = flashId;
+      // ---- AUTO: start with Flash, escalate to Pro only when result is weak ----
+      let used   = flashId;
       let result = await callGateway(flashId, payload, key);
       let escalated = false;
+
       if (isWeakResult(result)) {
         try {
           const proResult = await callGateway(proId, payload, key);
           const flashLen = (result.extractedText ?? "").trim().length;
-          const proLen = (proResult.extractedText ?? "").trim().length;
+          const proLen   = (proResult.extractedText ?? "").trim().length;
+          // Keep Pro only if it read *at least* as much text as Flash.
           if (proLen >= flashLen) {
-            result = proResult;
-            used = proId;
+            result    = proResult;
+            used      = proId;
             escalated = true;
           }
         } catch {
-          /* keep flash */
+          // Pro also failed — keep the Flash result and surface it.
         }
       }
 
-      // Do not run Kimi on every request; keep it as a fallback so we avoid
-      // unnecessary extra accounts/credits during normal captures.
-      return finalize(result, used, escalated, images_b64.length, false);
+      return finalize(result, used, escalated, images_b64.length);
+
     } catch (error) {
-      if (isAiGatewayCreditError(error)) {
-        // Try Kimi only if a key exists; otherwise return a safe result instead
-        // of throwing, because a thrown server-function error blanks the preview.
-        if (!process.env.KIMI_API_KEY) {
-          return finalize(
-            creditUnavailableResult("Main AI credits are unavailable."),
-            "AI unavailable",
-            false,
-            images_b64.length,
-            false,
-          );
-        }
-        try {
-          const fallback = await callKimiVision(payload);
-          return finalize(fallback, "kimi-k2.6 fallback", false, images_b64.length, false);
-        } catch (kimiErr) {
-          const msg = kimiErr instanceof Error ? kimiErr.message : String(kimiErr);
-          return finalize(
-            creditUnavailableResult(msg),
-            "AI unavailable",
-            false,
-            images_b64.length,
-            false,
-          );
-        }
+      // Credit exhaustion: return a spoken "top up your credits" result so the
+      // UI keeps the camera preview visible rather than throwing a blank error.
+      if ((error as { isCreditError?: boolean }).isCreditError) {
+        const detail = (error as { detail?: string }).detail;
+        return finalize(
+          creditsUnavailableResult(detail),
+          "AI credits unavailable",
+          false,
+          images_b64.length,
+        );
       }
       throw error;
     }
   });
 
-const KIMI_VERIFIER_PROMPT = `You are a meticulous math/physics grader and TTS-script editor. You will receive a JSON object produced by another AI that solved a problem from a student's photo, plus the verbatim text the OCR engine read off the page. Your job:
-1) Recompute the math silently. If any step is wrong (arithmetic, sign, exponent, integration bound, derivative rule, units), FIX it.
-2) IF THE DRAFT ONLY RESTATES THE QUESTION WITHOUT SOLVING IT, you MUST produce the full worked solution yourself, from setup to final answer. Never leave a problem unsolved.
-3) Make sure every step is ONE clear spoken sentence (8-22 words), starts with a cue word (First/Next/Now/Then/Substituting/Simplifying/Finally), and reads math fully in English words (no raw symbols, no LaTeX, no markdown). Use phrasing like "x squared", "the integral from a to b of f of x d x", "the derivative with respect to x of", "the limit as x approaches zero of".
-4) Break work into 8-16 micro-steps so the listener can write each line.
-5) The last step must clearly state the final answer in words.
-6) Keep extractedText unchanged unless the OCR is obviously wrong; in that case correct it and keep LaTeX inside $...$.
-Return ONLY the corrected JSON in the exact same shape: {"title","summary","steps","extractedText","confidence"}. No commentary.`;
 
-async function kimiVerify(parsed: Parsed, contextText?: string): Promise<Parsed> {
-  const kimiKey = process.env.KIMI_API_KEY;
-  if (!kimiKey) return parsed;
-  const body = {
-    model: "kimi-k2-0905-preview",
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: KIMI_VERIFIER_PROMPT },
-      {
-        role: "user",
-        content:
-          `Draft from the first AI (JSON):\n${JSON.stringify(parsed)}\n\n` +
-          (contextText?.trim()
-            ? `Class material to follow:\n${contextText.trim().slice(0, 6000)}\n\n`
-            : "") +
-          `Verify the math, fix any error, and rewrite the steps to be perfectly listenable.`,
-      },
-    ],
-  };
-  const res = await fetch("https://api.moonshot.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${kimiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) return parsed;
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = json.choices?.[0]?.message?.content ?? "";
-  const out = safeParseJsonObject(content);
-  if (out && Array.isArray(out.steps) && out.steps.length > 0) return out;
-  return parsed;
-}
-
-
-function finalize(parsed: Parsed, modelUsed: string, escalated: boolean, framesUsed: number, kimiVerified = false) {
+function finalize(
+  parsed: Parsed,
+  modelUsed: string,
+  escalated: boolean,
+  framesUsed: number,
+) {
   const steps = (parsed.steps ?? []).filter(
     (s) => typeof s === "string" && s.trim().length > 0,
   );
@@ -439,7 +313,5 @@ function finalize(parsed: Parsed, modelUsed: string, escalated: boolean, framesU
     modelUsed,
     escalated,
     framesUsed,
-    kimiVerified,
-
   };
 }

@@ -783,6 +783,11 @@ bool captureAndSend() {
     delay(120);
   }
 
+  // Stage B½ — AUTOFOCUS (OV5640 only). The 78 mm flex DC5640-AF has a VCM
+  // motor that must run a fresh focus cycle for each paper distance.
+  ov5640TriggerAf(s, 1500);
+
+
   // Stage C — BURST OF 8 frames. For a fixed scene at fixed JPEG quality
   // the encoder emits a LARGER file when the frame has MORE high-frequency
   // edge detail (i.e. is sharper). Pick the largest = sharpest. Pro doc-

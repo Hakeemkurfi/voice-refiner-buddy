@@ -501,6 +501,7 @@ static bool ringScanRunning = false;
 static unsigned long lastBleScan = 0;
 static unsigned long lastRingAction = 0;
 static unsigned long lastRingConnectAttempt = 0;
+static uint8_t ringConnectFailures = 0;
 
 class RingClientCallbacks : public BLEClientCallbacks {
   void onConnect(BLEClient*) override {
@@ -594,6 +595,7 @@ class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
       BLEDevice::getScan()->stop();
       if (ringDevice) delete ringDevice;
       ringDevice = new BLEAdvertisedDevice(dev);
+      ringConnectFailures = 0;
       ringScanRunning = false;
     }
   }
@@ -615,6 +617,12 @@ bool connectRingBle() {
     Serial.println("[ring] connect failed — if phone shows Pair popup, tap Cancel and keep S10 unpaired from phone");
     delete ringClient;
     ringClient = nullptr;
+    if (++ringConnectFailures >= 3) {
+      Serial.println("[ring] rescanning because the saved S10 advertisement is stale or busy");
+      delete ringDevice;
+      ringDevice = nullptr;
+      ringConnectFailures = 0;
+    }
     return false;
   }
   ringClient->setMTU(69);
@@ -636,6 +644,7 @@ bool connectRingBle() {
     }
   }
   ringConnected = subscribed > 0;
+  if (ringConnected) ringConnectFailures = 0;
   Serial.printf("[ring] %s, subscribed reports=%d\n", ringConnected ? "CONNECTED: press M now" : "no notify reports", subscribed);
   return ringConnected;
 }
@@ -647,6 +656,8 @@ void initRingBle() {
   BLEScan* scan = BLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(new RingAdvertisedCallbacks());
   scan->setActiveScan(true);
+  scan->setInterval(96);
+  scan->setWindow(64);
   Serial.println("[ring] BLE HID host enabled. Unpair ring from phone, then hold ring power/pair button.");
 }
 

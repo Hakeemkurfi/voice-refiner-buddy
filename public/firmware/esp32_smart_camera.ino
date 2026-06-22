@@ -595,9 +595,24 @@ class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
 
 bool connectRingBle() {
   if (!ringDevice) return false;
-  Serial.println("[ring] connecting...");
+  if (millis() - lastRingConnectAttempt < 2500) return false;
+  lastRingConnectAttempt = millis();
+  if (ringClient) {
+    if (ringClient->isConnected()) ringClient->disconnect();
+    delete ringClient;
+    ringClient = nullptr;
+  }
+  Serial.printf("[ring] connecting to S10 HID at %s...\n", ringDevice->getAddress().toString().c_str());
   ringClient = BLEDevice::createClient();
-  if (!ringClient->connect(ringDevice)) { Serial.println("[ring] connect failed"); return false; }
+  ringClient->setClientCallbacks(new RingClientCallbacks(), true);
+  if (!ringClient->connect(ringDevice, false)) {
+    Serial.println("[ring] connect failed — if phone shows Pair popup, tap Cancel and keep S10 unpaired from phone");
+    delete ringClient;
+    ringClient = nullptr;
+    return false;
+  }
+  ringClient->setMTU(69);
+  if (!ringClient->isConnected()) { Serial.println("[ring] link dropped during pairing"); return false; }
   BLERemoteService* hid = ringClient->getService(BLEUUID((uint16_t)0x1812));
   if (!hid) { Serial.println("[ring] HID service missing"); ringClient->disconnect(); return false; }
   int subscribed = 0;
@@ -606,17 +621,23 @@ bool connectRingBle() {
     BLERemoteCharacteristic* c = it.second;
     if (c->getUUID().equals(BLEUUID((uint16_t)0x2A4D)) && c->canNotify()) {
       c->registerForNotify(ringNotify);
+      BLERemoteDescriptor* cccd = c->getDescriptor(BLEUUID((uint16_t)0x2902));
+      if (cccd) {
+        uint8_t notifyOn[] = {0x01, 0x00};
+        cccd->writeValue(notifyOn, 2, true);
+      }
       subscribed++;
     }
   }
   ringConnected = subscribed > 0;
-  Serial.printf("[ring] %s, subscribed reports=%d\n", ringConnected ? "ready" : "no notify reports", subscribed);
+  Serial.printf("[ring] %s, subscribed reports=%d\n", ringConnected ? "CONNECTED: press M now" : "no notify reports", subscribed);
   return ringConnected;
 }
 
 void initRingBle() {
   BLEDevice::init("ESP32 Tutor Ring Host");
   BLEDevice::setPower(ESP_PWR_LVL_P9);
+  configureRingSecurity();
   BLEScan* scan = BLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(new RingAdvertisedCallbacks());
   scan->setActiveScan(true);

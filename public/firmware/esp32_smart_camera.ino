@@ -556,6 +556,10 @@ void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");
   for (size_t i = 0; i < len; i++) Serial.printf(" %02X", d[i]);
   Serial.println();
+  if (len == 0) return;
+  bool anyPressed = false;
+  for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
+  if (!anyPressed) return; // release report
   if (len >= 3) {
     for (size_t i = 2; i < len; i++) {
       switch (d[i]) {
@@ -579,6 +583,7 @@ void handleRingReport(uint8_t* d, size_t len) {
       default: break;
     }
   }
+  Serial.println(">>> [RING BUTTON] unknown S10 code printed above — send me that report line and I will map it <<<");
 }
 
 static void ringNotify(BLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {

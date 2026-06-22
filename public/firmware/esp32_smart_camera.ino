@@ -33,6 +33,7 @@
 #include <BLEScan.h>
 #include <BLEClient.h>
 #include <BLESecurity.h>
+#include <BLERemoteDescriptor.h>
 #include <map>
 
 // ====== EDIT THESE ======

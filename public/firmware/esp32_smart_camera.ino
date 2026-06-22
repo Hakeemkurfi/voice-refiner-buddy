@@ -32,6 +32,8 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEClient.h>
+#include <BLESecurity.h>
+#include <BLERemoteDescriptor.h>
 #include <map>
 
 // ====== EDIT THESE ======
@@ -49,13 +51,12 @@ const char* DEVICE_ID     = "esp32-cam-01";
 #define UPLOAD_CHUNK_SIZE 1024
 
 // ====== BURST CAPTURE ======
-// On M button (ring) we record a multi-frame burst, stream each frame to the
-// server, then call /api/public/burst/finalize. The server picks the 3
-// sharpest frames spread across the burst and sends them as a multi-image
-// request to Gemini, which merges the text across all frames.
-#define BURST_MS            4000   // total burst length in milliseconds
-#define BURST_MIN_GAP_MS    160    // ~6 fps target; OV3660 QXGA caps out around here
-#define BURST_MAX_FRAMES    30     // hard safety cap
+// M button now does the faster best-frame document capture. The multi-frame
+// server burst remains available from Serial/local dashboard when you want to
+// sweep slowly across half an A4 page.
+#define BURST_MS            3000   // total capture window in milliseconds
+#define BURST_MIN_GAP_MS    190    // pace camera/network so frames remain complete
+#define BURST_MAX_FRAMES    14     // hard safety cap for one short burst
 
 // Button pins — chosen so they DO NOT collide with the camera bus.
 // Your camera uses: 4,5,6,7,8,9,10,11,12,13,15,16,17,18.
@@ -71,7 +72,7 @@ const char* DEVICE_ID     = "esp32-cam-01";
 // The ring usually advertises as a BLE HID keyboard/media controller.
 // Leave empty to accept the first HID device found; set a fragment like
 // "BT003" / "Ring" / "Remote" if another keyboard is nearby.
-const char* RING_NAME_HINT = "";
+const char* RING_NAME_HINT = "S10";
 
 WebServer localServer(80);
 
@@ -161,7 +162,7 @@ bool initCamera() {
   // at QXGA to avoid the rainbow stripe. Start at 20 MHz so the driver can
   // probe OV5640 registers at full speed; tune down below if OV3660 is found.
   config.xclk_freq_hz = 20000000;
-  config.frame_size   = FRAMESIZE_QSXGA;     // 2592x1944 OV5640 native; driver downgrades for OV3660
+  config.frame_size   = FRAMESIZE_QSXGA;     // init high; OV5640 is tuned down to steadier QXGA document mode below
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
@@ -182,8 +183,10 @@ bool initCamera() {
 
   if (isOv5640) {
     // ---------- OV5640 / DC5640-AF tuning for printed paper ----------
-    s->set_framesize(s, FRAMESIZE_QSXGA);
-    s->set_quality(s, 6);
+    // QXGA is the best practical A4-note mode on this handheld build: sharper
+    // under hand shake than full 5 MP, still high enough for equations/graphs.
+    s->set_framesize(s, FRAMESIZE_QXGA);
+    s->set_quality(s, 4);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
     s->set_wb_mode(s, 0);                    // OV5640 auto WB is good on documents
@@ -197,7 +200,7 @@ bool initCamera() {
     s->set_contrast(s, 1);
     s->set_saturation(s, 0);
     s->set_sharpness(s, 3);
-    s->set_denoise(s, 4);                    // OV5640 needs some denoise at 5 MP
+    s->set_denoise(s, 2);                    // too much denoise smears pencil/thin graph lines
     s->set_lenc(s, 1);
     s->set_bpc(s, 1);
     s->set_wpc(s, 1);
@@ -270,9 +273,12 @@ void handleLocalRoot() {
   page += "<title>ESP32 Smart Audio Tutor</title><body style='font-family:Arial,sans-serif;margin:20px;line-height:1.4'>";
   page += "<h2>ESP32 Smart Audio Tutor</h2>";
   page += "<p>If this preview image appears, the camera is working locally.</p>";
-  page += "<img src='/jpg?ts=" + String(millis()) + "' style='width:100%;max-width:640px;border:1px solid #ccc'>";
+  page += "<p>A4 framing: hold the camera about 25-35 cm above the paper; fill most of the preview with the page.</p>";
+  page += "<img id='live' src='/jpg?ts=" + String(millis()) + "' style='width:100%;max-width:720px;border:1px solid #ccc'>";
+  page += "<script>setInterval(()=>{live.src='/jpg?ts='+Date.now()},900)</script>";
   page += "<p><a href='/capture'><button style='font-size:18px;padding:12px 18px'>Capture and send to app</button></a></p>";
   page += "<p><a href='/ping'><button style='font-size:16px;padding:10px 14px'>Test app server</button></a> ";
+  page += "<a href='/burst'><button style='font-size:16px;padding:10px 14px'>Slow sweep burst</button></a> ";
   page += "<a href='/next'><button style='font-size:16px;padding:10px 14px'>Next</button></a> ";
   page += "<a href='/prev'><button style='font-size:16px;padding:10px 14px'>Prev</button></a></p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
@@ -292,6 +298,8 @@ static inline bool isCompleteJpeg(const uint8_t* buf, size_t len) {
 }
 
 void handleLocalJpg() {
+  sensor_t* s = esp_camera_sensor_get();
+  ov5640TriggerAf(s, 700);
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }
   WiFiClient localClient = localServer.client();
@@ -318,6 +326,7 @@ void startLocalDashboard() {
   localServer.on("/", handleLocalRoot);
   localServer.on("/jpg", handleLocalJpg);
   localServer.on("/capture", handleLocalCapture);
+  localServer.on("/burst", []() { bool ok = runBurst(); localServer.send(200, "text/html", String("<p>") + (ok ? "Burst sent to app." : "Burst failed. Check Serial Monitor.") + "</p><p><a href='/'>Back</a></p>"); });
   localServer.on("/ping", handleLocalPing);
   localServer.on("/next", []() { bool ok = postCommand("next"); localServer.send(200, "text/html", String("<p>") + (ok ? "Next sent." : "Next failed.") + "</p><p><a href='/'>Back</a></p>"); });
   localServer.on("/prev", []() { bool ok = postCommand("prev"); localServer.send(200, "text/html", String("<p>") + (ok ? "Prev sent." : "Prev failed.") + "</p><p><a href='/'>Back</a></p>"); });
@@ -494,6 +503,28 @@ static bool ringConnected = false;
 static bool ringScanRunning = false;
 static unsigned long lastBleScan = 0;
 static unsigned long lastRingAction = 0;
+static unsigned long lastRingConnectAttempt = 0;
+static uint8_t ringConnectFailures = 0;
+
+class RingClientCallbacks : public BLEClientCallbacks {
+  void onConnect(BLEClient*) override {
+    Serial.println("[ring] BLE link opened");
+  }
+  void onDisconnect(BLEClient*) override {
+    ringConnected = false;
+    Serial.println("[ring] disconnected — wake S10 and it will reconnect");
+  }
+};
+static RingClientCallbacks ringCallbacks;
+
+void configureRingSecurity() {
+  BLESecurity* security = new BLESecurity();
+  security->setAuthenticationMode(ESP_LE_AUTH_BOND);
+  security->setCapability(ESP_IO_CAP_NONE);       // S10 pairing: Just Works, no phone popup needed
+  security->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  security->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+}
 
 void ringAction(const char* action) {
   if (millis() - lastRingAction < 450) return;  // ignore key-release / bounce reports
@@ -502,7 +533,8 @@ void ringAction(const char* action) {
   // staring at hex bytes.
   Serial.printf("\n>>> [RING BUTTON] %s  (BLE connected=%s) <<<\n",
                 action, ringConnected ? "YES" : "NO");
-  if (!strcmp(action, "capture")) runBurst();
+  if (!strcmp(action, "capture")) captureAndSend();
+  else if (!strcmp(action, "burst")) runBurst();
   else if (!strcmp(action, "single")) captureAndSend();
   else if (!strcmp(action, "next")) postCommand("next");
   else if (!strcmp(action, "prev")) postCommand("prev");
@@ -528,6 +560,10 @@ void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");
   for (size_t i = 0; i < len; i++) Serial.printf(" %02X", d[i]);
   Serial.println();
+  if (len == 0) return;
+  bool anyPressed = false;
+  for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
+  if (!anyPressed) return; // release report
   if (len >= 3) {
     for (size_t i = 2; i < len; i++) {
       switch (d[i]) {
@@ -551,6 +587,7 @@ void handleRingReport(uint8_t* d, size_t len) {
       default: break;
     }
   }
+  Serial.println(">>> [RING BUTTON] unknown S10 code printed above — send me that report line and I will map it <<<");
 }
 
 static void ringNotify(BLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
@@ -567,6 +604,7 @@ class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
       BLEDevice::getScan()->stop();
       if (ringDevice) delete ringDevice;
       ringDevice = new BLEAdvertisedDevice(dev);
+      ringConnectFailures = 0;
       ringScanRunning = false;
     }
   }
@@ -574,9 +612,30 @@ class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
 
 bool connectRingBle() {
   if (!ringDevice) return false;
-  Serial.println("[ring] connecting...");
+  if (millis() - lastRingConnectAttempt < 2500) return false;
+  lastRingConnectAttempt = millis();
+  if (ringClient) {
+    if (ringClient->isConnected()) ringClient->disconnect();
+    delete ringClient;
+    ringClient = nullptr;
+  }
+  Serial.printf("[ring] connecting to S10 HID at %s...\n", ringDevice->getAddress().toString().c_str());
   ringClient = BLEDevice::createClient();
-  if (!ringClient->connect(ringDevice)) { Serial.println("[ring] connect failed"); return false; }
+  ringClient->setClientCallbacks(&ringCallbacks);
+  if (!ringClient->connect(ringDevice)) {
+    Serial.println("[ring] connect failed — if phone shows Pair popup, tap Cancel and keep S10 unpaired from phone");
+    delete ringClient;
+    ringClient = nullptr;
+    if (++ringConnectFailures >= 3) {
+      Serial.println("[ring] rescanning because the saved S10 advertisement is stale or busy");
+      delete ringDevice;
+      ringDevice = nullptr;
+      ringConnectFailures = 0;
+    }
+    return false;
+  }
+  ringClient->setMTU(69);
+  if (!ringClient->isConnected()) { Serial.println("[ring] link dropped during pairing"); return false; }
   BLERemoteService* hid = ringClient->getService(BLEUUID((uint16_t)0x1812));
   if (!hid) { Serial.println("[ring] HID service missing"); ringClient->disconnect(); return false; }
   int subscribed = 0;
@@ -585,20 +644,29 @@ bool connectRingBle() {
     BLERemoteCharacteristic* c = it.second;
     if (c->getUUID().equals(BLEUUID((uint16_t)0x2A4D)) && c->canNotify()) {
       c->registerForNotify(ringNotify);
+      BLERemoteDescriptor* cccd = c->getDescriptor(BLEUUID((uint16_t)0x2902));
+      if (cccd) {
+        uint8_t notifyOn[] = {0x01, 0x00};
+        cccd->writeValue(notifyOn, 2, true);
+      }
       subscribed++;
     }
   }
   ringConnected = subscribed > 0;
-  Serial.printf("[ring] %s, subscribed reports=%d\n", ringConnected ? "ready" : "no notify reports", subscribed);
+  if (ringConnected) ringConnectFailures = 0;
+  Serial.printf("[ring] %s, subscribed reports=%d\n", ringConnected ? "CONNECTED: press M now" : "no notify reports", subscribed);
   return ringConnected;
 }
 
 void initRingBle() {
   BLEDevice::init("ESP32 Tutor Ring Host");
   BLEDevice::setPower(ESP_PWR_LVL_P9);
+  configureRingSecurity();
   BLEScan* scan = BLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(new RingAdvertisedCallbacks());
   scan->setActiveScan(true);
+  scan->setInterval(96);
+  scan->setWindow(64);
   Serial.println("[ring] BLE HID host enabled. Unpair ring from phone, then hold ring power/pair button.");
 }
 
@@ -872,7 +940,7 @@ void setup() {
   connectWifi();
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   initRingBle();
-  Serial.println("Ready. Serial: 'ping' / 'cap' / 'next' / 'prev' / 'ring' / 'af' / 'audit'.");
+  Serial.println("Ready. Serial: 'ping' / 'cap' / 'burst' / 'next' / 'prev' / 'ring' / 'af' / 'audit'.");
 }
 
 void printAudit() {

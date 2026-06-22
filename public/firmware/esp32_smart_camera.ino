@@ -32,6 +32,7 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEClient.h>
+#include <BLESecurity.h>
 #include <map>
 
 // ====== EDIT THESE ======
@@ -49,13 +50,12 @@ const char* DEVICE_ID     = "esp32-cam-01";
 #define UPLOAD_CHUNK_SIZE 1024
 
 // ====== BURST CAPTURE ======
-// On M button (ring) we record a multi-frame burst, stream each frame to the
-// server, then call /api/public/burst/finalize. The server picks the 3
-// sharpest frames spread across the burst and sends them as a multi-image
-// request to Gemini, which merges the text across all frames.
-#define BURST_MS            4000   // total burst length in milliseconds
-#define BURST_MIN_GAP_MS    160    // ~6 fps target; OV3660 QXGA caps out around here
-#define BURST_MAX_FRAMES    30     // hard safety cap
+// M button now does the faster best-frame document capture. The multi-frame
+// server burst remains available from Serial/local dashboard when you want to
+// sweep slowly across half an A4 page.
+#define BURST_MS            3000   // total capture window in milliseconds
+#define BURST_MIN_GAP_MS    190    // pace camera/network so frames remain complete
+#define BURST_MAX_FRAMES    14     // hard safety cap for one short burst
 
 // Button pins — chosen so they DO NOT collide with the camera bus.
 // Your camera uses: 4,5,6,7,8,9,10,11,12,13,15,16,17,18.
@@ -71,7 +71,7 @@ const char* DEVICE_ID     = "esp32-cam-01";
 // The ring usually advertises as a BLE HID keyboard/media controller.
 // Leave empty to accept the first HID device found; set a fragment like
 // "BT003" / "Ring" / "Remote" if another keyboard is nearby.
-const char* RING_NAME_HINT = "";
+const char* RING_NAME_HINT = "S10";
 
 WebServer localServer(80);
 

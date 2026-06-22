@@ -617,6 +617,7 @@ void maintainRingBle() {
 #else
 void initRingBle() {}
 void maintainRingBle() {}
+void printRingStatus() { Serial.println("BLE ring host disabled at compile time (ENABLE_BLE_RING=0)."); }
 #endif
 
 

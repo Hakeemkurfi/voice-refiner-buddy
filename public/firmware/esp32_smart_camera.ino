@@ -515,6 +515,7 @@ class RingClientCallbacks : public BLEClientCallbacks {
     Serial.println("[ring] disconnected — wake S10 and it will reconnect");
   }
 };
+static RingClientCallbacks ringCallbacks;
 
 void configureRingSecurity() {
   BLESecurity* security = new BLESecurity();
@@ -620,7 +621,7 @@ bool connectRingBle() {
   }
   Serial.printf("[ring] connecting to S10 HID at %s...\n", ringDevice->getAddress().toString().c_str());
   ringClient = BLEDevice::createClient();
-  ringClient->setClientCallbacks(new RingClientCallbacks());
+  ringClient->setClientCallbacks(&ringCallbacks);
   if (!ringClient->connect(ringDevice)) {
     Serial.println("[ring] connect failed — if phone shows Pair popup, tap Cancel and keep S10 unpaired from phone");
     delete ringClient;

@@ -16,6 +16,23 @@ type Parsed = {
   confidence?: number;
 };
 
+function creditUnavailableResult(detail?: string): Parsed {
+  return {
+    title: "AI credits unavailable",
+    summary: "The picture arrived, but the AI solver cannot run until credits are available.",
+    steps: [
+      "First, your image reached the app, so the camera upload path is working.",
+      "Next, the AI solver is paused because the available AI balance is exhausted or blocked.",
+      "Now, top up the app AI balance, or disable the empty backup provider before trying again.",
+      detail
+        ? `Finally, the provider message was: ${detail.slice(0, 160)}`
+        : "Finally, try the same capture again after credits are available.",
+    ],
+    extractedText: "",
+    confidence: 0,
+  };
+}
+
 class AiGatewayCreditError extends Error {
   constructor(message: string) {
     super(message);
@@ -331,10 +348,15 @@ export const analyzeImage = createServerFn({ method: "POST" })
       return finalize(result, used, escalated, images_b64.length, false);
     } catch (error) {
       if (isAiGatewayCreditError(error)) {
-        // Try Kimi only if a key exists; otherwise surface the clear top-up message.
+        // Try Kimi only if a key exists; otherwise return a safe result instead
+        // of throwing, because a thrown server-function error blanks the preview.
         if (!process.env.KIMI_API_KEY) {
-          throw new Error(
-            "Your Lovable AI credits are exhausted. Open Settings → Workspace → Usage to top up, then try again. (Both Gemini Flash and Pro share the same workspace credits.)",
+          return finalize(
+            creditUnavailableResult("Main AI credits are unavailable."),
+            "AI unavailable",
+            false,
+            images_b64.length,
+            false,
           );
         }
         try {
@@ -342,8 +364,12 @@ export const analyzeImage = createServerFn({ method: "POST" })
           return finalize(fallback, "kimi-k2.6 fallback", false, images_b64.length, false);
         } catch (kimiErr) {
           const msg = kimiErr instanceof Error ? kimiErr.message : String(kimiErr);
-          throw new Error(
-            `Out of credits on both providers. Top up Lovable AI credits (Settings → Workspace → Usage). Details: ${msg.slice(0, 180)}`,
+          return finalize(
+            creditUnavailableResult(msg),
+            "AI unavailable",
+            false,
+            images_b64.length,
+            false,
           );
         }
       }

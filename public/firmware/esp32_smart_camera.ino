@@ -523,7 +523,6 @@ void configureRingSecurity() {
   security->setCapability(ESP_IO_CAP_NONE);       // S10 pairing: Just Works, no phone popup needed
   security->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   security->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
-  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
 }
 
 void ringAction(const char* action) {

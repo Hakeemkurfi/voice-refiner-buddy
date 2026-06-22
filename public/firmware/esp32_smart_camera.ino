@@ -498,14 +498,31 @@ static unsigned long lastRingAction = 0;
 void ringAction(const char* action) {
   if (millis() - lastRingAction < 450) return;  // ignore key-release / bounce reports
   lastRingAction = millis();
-  Serial.printf("[ring] action=%s\n", action);
-  if (!strcmp(action, "capture")) runBurst();   // M button → burst of frames
-  else if (!strcmp(action, "single")) captureAndSend(); // fallback single-shot
+  // VERY visible button print so you can confirm the ring is paired without
+  // staring at hex bytes.
+  Serial.printf("\n>>> [RING BUTTON] %s  (BLE connected=%s) <<<\n",
+                action, ringConnected ? "YES" : "NO");
+  if (!strcmp(action, "capture")) runBurst();
+  else if (!strcmp(action, "single")) captureAndSend();
   else if (!strcmp(action, "next")) postCommand("next");
   else if (!strcmp(action, "prev")) postCommand("prev");
   else if (!strcmp(action, "replay")) postCommand("replay");
   else if (!strcmp(action, "stop")) postCommand("stop");
 }
+
+void printRingStatus() {
+  Serial.println("---- RING / BLE STATUS ----");
+  Serial.printf("  BLE feature compiled in : %s\n", "YES");
+  Serial.printf("  Ring device discovered  : %s\n", ringDevice ? "YES" : "no");
+  Serial.printf("  Ring BLE connected      : %s\n", ringConnected ? "YES" : "no");
+  Serial.printf("  Scan in progress        : %s\n", ringScanRunning ? "yes" : "no");
+  Serial.printf("  Last button (ms ago)    : %lu\n",
+                lastRingAction == 0 ? 0UL : (millis() - lastRingAction));
+  Serial.printf("  Hint: if NOT connected, UNPAIR the ring from your phone first,\n"
+                "        then hold the ring's pair button until its LED flashes.\n");
+  Serial.println("---------------------------");
+}
+
 
 void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");

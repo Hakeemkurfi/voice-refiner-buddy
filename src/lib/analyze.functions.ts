@@ -163,11 +163,19 @@ async function callKimiVision(data: { images_b64: string[]; contextText?: string
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    if (res.status === 402) {
-      throw new Error("Kimi fallback also asked for account top-up, so image analysis could not continue.");
-    }
-    if (res.status === 401) {
-      throw new Error("Kimi fallback rejected the saved API key. Please update the Kimi key securely.");
+    const lower = text.toLowerCase();
+    const isBilling =
+      res.status === 402 ||
+      res.status === 401 ||
+      (res.status === 429 &&
+        (lower.includes("insufficient balance") ||
+          lower.includes("suspended") ||
+          lower.includes("recharge") ||
+          lower.includes("balance")));
+    if (isBilling) {
+      throw new Error(
+        "Both AI providers are out of credits right now. Please top up your Lovable AI credits (Settings → Workspace → Usage) to keep analyzing images.",
+      );
     }
     throw new Error(`Kimi fallback failed ${res.status}: ${text.slice(0, 240)}`);
   }

@@ -871,7 +871,27 @@ void setup() {
   if (!initCamera()) { Serial.println("Halting."); while (true) delay(1000); }
   connectWifi();
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
-  Serial.println("Ready. Type 'ping' to test server, or 'cap' / 'next' / 'prev' in Serial Monitor.");
+  initRingBle();
+  Serial.println("Ready. Serial: 'ping' / 'cap' / 'next' / 'prev' / 'ring' / 'af' / 'audit'.");
+}
+
+void printAudit() {
+  Serial.println("====== SYSTEM AUDIT ======");
+  Serial.printf("  WiFi SSID         : %s\n", WIFI_SSID);
+  Serial.printf("  WiFi status       : %s\n", WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DOWN");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("  Local IP          : %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("  RSSI              : %d dBm\n", WiFi.RSSI());
+  }
+  Serial.printf("  Server host       : https://%s%s\n", SERVER_HOST, SERVER_PATH);
+  Serial.printf("  Sensor PID        : 0x%04x (%s)\n", sensorPid,
+                isOv5640 ? "OV5640 AF" : (sensorPid == 0x3660 ? "OV3660 fixed" : "unknown"));
+  Serial.printf("  OV5640 AF ready   : %s\n", ov5640AfReady ? "YES" : "no");
+  Serial.printf("  Free heap         : %u bytes\n", (unsigned)ESP.getFreeHeap());
+  Serial.printf("  Free PSRAM        : %u bytes\n", (unsigned)ESP.getFreePsram());
+  Serial.printf("  Uptime            : %lu s\n", millis() / 1000UL);
+  printRingStatus();
+  Serial.println("==========================");
 }
 
 void handleSerial() {
@@ -881,11 +901,15 @@ void handleSerial() {
     if (c == '\r') continue;
     if (c == '\n') {
       line.trim();
-      if (line.equalsIgnoreCase("ping"))      { Serial.println("[serial] ping"); checkServer(); }
-      else if (line.equalsIgnoreCase("cap"))  { Serial.println("[serial] cap");  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above"); }
-      else if (line.equalsIgnoreCase("next")) { Serial.println("[serial] next"); postCommand("next"); }
-      else if (line.equalsIgnoreCase("prev")) { Serial.println("[serial] prev"); postCommand("prev"); }
-      else if (line.length() > 0)             { Serial.printf("[serial] unknown: %s\n", line.c_str()); }
+      if      (line.equalsIgnoreCase("ping"))  { Serial.println("[serial] ping"); checkServer(); }
+      else if (line.equalsIgnoreCase("cap"))   { Serial.println("[serial] cap");  Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
+      else if (line.equalsIgnoreCase("burst")) { Serial.println("[serial] burst"); runBurst(); }
+      else if (line.equalsIgnoreCase("next"))  { postCommand("next"); }
+      else if (line.equalsIgnoreCase("prev"))  { postCommand("prev"); }
+      else if (line.equalsIgnoreCase("ring"))  { printRingStatus(); }
+      else if (line.equalsIgnoreCase("af"))    { sensor_t* s = esp_camera_sensor_get(); Serial.println(ov5640TriggerAf(s, 1500) ? "✓ AF locked" : "✗ AF failed (not OV5640 or driver too old)"); }
+      else if (line.equalsIgnoreCase("audit")) { printAudit(); }
+      else if (line.length() > 0)              { Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit)\n", line.c_str()); }
       line = "";
     } else if (line.length() < 32) {
       line += c;
@@ -897,9 +921,10 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) { connectWifi(); if (WiFi.status() == WL_CONNECTED) startLocalDashboard(); delay(500); return; }
   localServer.handleClient();
   handleSerial();
-  if (pressed(CAPTURE_BTN, &capState,  &capT))  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above");
-  if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");
-  if (pressed(PREV_BTN,    &prevState, &prevT)) postCommand("prev");
-  pollTrigger();   // ring remote M button -> capture
+  if (pressed(CAPTURE_BTN, &capState,  &capT))  { Serial.println("[BTN] CAPTURE pressed"); Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
+  if (pressed(NEXT_BTN,    &nextState, &nextT)) { Serial.println("[BTN] NEXT pressed");    postCommand("next"); }
+  if (pressed(PREV_BTN,    &prevState, &prevT)) { Serial.println("[BTN] PREV pressed");    postCommand("prev"); }
+  maintainRingBle();
+  pollTrigger();
   delay(10);
 }

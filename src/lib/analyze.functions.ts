@@ -331,8 +331,21 @@ export const analyzeImage = createServerFn({ method: "POST" })
       return finalize(result, used, escalated, images_b64.length, false);
     } catch (error) {
       if (isAiGatewayCreditError(error)) {
-        const fallback = await callKimiVision(payload);
-        return finalize(fallback, "kimi-k2.6 fallback", false, images_b64.length, false);
+        // Try Kimi only if a key exists; otherwise surface the clear top-up message.
+        if (!process.env.KIMI_API_KEY) {
+          throw new Error(
+            "Your Lovable AI credits are exhausted. Open Settings → Workspace → Usage to top up, then try again. (Both Gemini Flash and Pro share the same workspace credits.)",
+          );
+        }
+        try {
+          const fallback = await callKimiVision(payload);
+          return finalize(fallback, "kimi-k2.6 fallback", false, images_b64.length, false);
+        } catch (kimiErr) {
+          const msg = kimiErr instanceof Error ? kimiErr.message : String(kimiErr);
+          throw new Error(
+            `Out of credits on both providers. Top up Lovable AI credits (Settings → Workspace → Usage). Details: ${msg.slice(0, 180)}`,
+          );
+        }
       }
       throw error;
     }

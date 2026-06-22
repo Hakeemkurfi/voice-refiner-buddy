@@ -161,7 +161,7 @@ bool initCamera() {
   // at QXGA to avoid the rainbow stripe. Start at 20 MHz so the driver can
   // probe OV5640 registers at full speed; tune down below if OV3660 is found.
   config.xclk_freq_hz = 20000000;
-  config.frame_size   = FRAMESIZE_QSXGA;     // 2592x1944 OV5640 native; driver downgrades for OV3660
+  config.frame_size   = FRAMESIZE_QSXGA;     // init high; OV5640 is tuned down to steadier QXGA document mode below
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
@@ -182,8 +182,10 @@ bool initCamera() {
 
   if (isOv5640) {
     // ---------- OV5640 / DC5640-AF tuning for printed paper ----------
-    s->set_framesize(s, FRAMESIZE_QSXGA);
-    s->set_quality(s, 6);
+    // QXGA is the best practical A4-note mode on this handheld build: sharper
+    // under hand shake than full 5 MP, still high enough for equations/graphs.
+    s->set_framesize(s, FRAMESIZE_QXGA);
+    s->set_quality(s, 4);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
     s->set_wb_mode(s, 0);                    // OV5640 auto WB is good on documents
@@ -197,7 +199,7 @@ bool initCamera() {
     s->set_contrast(s, 1);
     s->set_saturation(s, 0);
     s->set_sharpness(s, 3);
-    s->set_denoise(s, 4);                    // OV5640 needs some denoise at 5 MP
+    s->set_denoise(s, 2);                    // too much denoise smears pencil/thin graph lines
     s->set_lenc(s, 1);
     s->set_bpc(s, 1);
     s->set_wpc(s, 1);

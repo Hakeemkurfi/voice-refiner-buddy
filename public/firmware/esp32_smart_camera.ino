@@ -100,6 +100,43 @@ void maintainRingBle();
 #define HREF_GPIO_NUM      7
 #define PCLK_GPIO_NUM     13
 
+// True once initCamera() finishes and we know what sensor is on the bus.
+//   OV3660 -> PID 0x3660 (3 MP, fixed focus)
+//   OV5640 -> PID 0x5640 (5 MP, motorised AF lens — the DC5640-AF you just plugged in)
+static uint16_t sensorPid = 0;
+static bool     isOv5640  = false;
+static bool     ov5640AfReady = false;
+
+// OV5640 autofocus control over SCCB.
+//   0x3022 = AF main command: 0x03 = SINGLE trigger, 0x04 = CONTINUOUS, 0x08 = release motor
+//   0x3023 = AF ACK (0 = done)        0x3029 = AF state (0x10 = focused / idle)
+// arduino-esp32 v3.x bundles esp32-camera v2.0.13+ which auto-uploads the
+// OV5640 AF firmware blob when it detects the sensor; we just poke the
+// command register before each capture.
+bool ov5640TriggerAf(sensor_t* s, uint32_t timeoutMs) {
+  if (!s || !isOv5640 || !ov5640AfReady) return false;
+  unsigned long t0 = millis();
+  while (millis() - t0 < 200) {
+    int ack = s->get_reg(s, 0x3023, 0xff);
+    if (ack == 0) break;
+    delay(10);
+  }
+  s->set_reg(s, 0x3023, 0xff, 0x01);
+  s->set_reg(s, 0x3022, 0xff, 0x03);  // SINGLE FOCUS
+  t0 = millis();
+  while (millis() - t0 < timeoutMs) {
+    int ack = s->get_reg(s, 0x3023, 0xff);
+    if (ack == 0) {
+      int state = s->get_reg(s, 0x3029, 0xff);
+      Serial.printf("  [AF] focused in %lu ms (state=0x%02x)\n", millis() - t0, state);
+      return true;
+    }
+    delay(15);
+  }
+  Serial.println("  [AF] timeout — using last lens position");
+  return false;
+}
+
 bool initCamera() {
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -120,85 +157,92 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  // XCLK 10 MHz: at QXGA the long DVP traces on the S3-WROOM cam can't keep
-  // up with PCLK at 16-24 MHz — symptom is exactly the horizontal rainbow
-  // stripe + color-shifted lower half you see in the preview. Dropping XCLK
-  // to 10 MHz fixes it (espressif esp32-camera issues #195, #532, #639).
-  config.xclk_freq_hz = 10000000;
-  // OV3660 native is 2048x1536 (QXGA). Giving the encoder real native pixels
-  // (instead of UXGA which is scaled down) is the single biggest sharpness
-  // win for printed text at 15-25 cm.
-  config.frame_size   = FRAMESIZE_QXGA;
+  // 20 MHz XCLK is fine for OV5640 over short DVP traces; OV3660 needed 10 MHz
+  // at QXGA to avoid the rainbow stripe. Start at 20 MHz so the driver can
+  // probe OV5640 registers at full speed; tune down below if OV3660 is found.
+  config.xclk_freq_hz = 20000000;
+  config.frame_size   = FRAMESIZE_QSXGA;     // 2592x1944 OV5640 native; driver downgrades for OV3660
   config.pixel_format = PIXFORMAT_JPEG;
-  // GRAB_LATEST + fb_count=2 is the espressif-recommended pattern: the driver
-  // keeps filling the second buffer in the background so esp_camera_fb_get()
-  // always returns the freshest converged frame, never a stale one. With
-  // fb_count=1 GRAB_LATEST is silently ignored (see esp32-camera issue #417).
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  // QS=4: very high quality JPEG (~250-350 KB at QXGA). Lower QS = sharper
-  // text edges; PSRAM on the N16R8 has plenty of headroom for 2 buffers.
-  config.jpeg_quality = 4;
-  config.fb_count     = 2;   // MUST be 2 for GRAB_LATEST, even with BLE on
+  config.jpeg_quality = 6;                   // QS=6 keeps 5 MP frames under ~500 KB
+  config.fb_count     = 2;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) { Serial.printf("Camera init failed: 0x%x\n", err); return false; }
 
-  // ============================================================
-  // OV3660 ISP TUNING FOR PRINTED TEXT — register-level overrides
-  // ============================================================
-  // The standard sensor_t setters only nudge a few high-level knobs. For real
-  // text-grade output we poke the OV3660 sharpness / contrast / gamma
-  // registers directly over SCCB (OmniVision OV3660 datasheet §6, addr 0x53xx):
-  //   0x5308 bit6  manual sharpness enable (override AUTO)
-  //   0x5300       sharpness MT offset1  (white-edge gain)  HIGH = crisper
-  //   0x5301       sharpness MT offset2  (black-edge gain)  HIGH = crisper
-  //   0x5302       sharpness MT denoise threshold1          LOW  = keep detail
-  //   0x5303       sharpness MT denoise threshold2          LOW  = keep detail
-  //   0x5586       contrast gain
-  //   0x5585       contrast offset
-  //   0x5480       gamma enable
   sensor_t* s = esp_camera_sensor_get();
-  if (s) {
-    // High-level setters first (these write a known-good register block)
-    s->set_framesize(s, FRAMESIZE_QXGA);
-    s->set_quality(s, 4);
+  if (!s) { Serial.println("sensor_get returned null"); return false; }
 
-    // White balance — Office preset eats the warm cast of indoor LEDs
+  sensorPid = s->id.PID;
+  isOv5640  = (sensorPid == 0x5640);
+  Serial.printf("=== Sensor PID=0x%04x  -> %s ===\n", sensorPid,
+                isOv5640 ? "OV5640 (5 MP, AF)" :
+                (sensorPid == 0x3660 ? "OV3660 (3 MP, fixed)" : "UNKNOWN"));
+
+  if (isOv5640) {
+    // ---------- OV5640 / DC5640-AF tuning for printed paper ----------
+    s->set_framesize(s, FRAMESIZE_QSXGA);
+    s->set_quality(s, 6);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 3);        // 3 = Office (whites stay white)
-
-    // Exposure: AUTO while warming up; we lock it after the burst warmup.
+    s->set_wb_mode(s, 0);                    // OV5640 auto WB is good on documents
     s->set_exposure_ctrl(s, 1);
-    s->set_aec2(s, 0);           // night mode OFF — no long exposures = no blur
-    s->set_ae_level(s, 1);       // +1 bias so white paper renders bright, not grey
-    s->set_aec_value(s, 700);
-
-    // Gain: clamp HARD. High ISO turns printed strokes into grey mush.
+    s->set_aec2(s, 1);
+    s->set_ae_level(s, 1);
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
-    s->set_gainceiling(s, (gainceiling_t)1);   // cap at 4x
-
+    s->set_gainceiling(s, (gainceiling_t)2); // cap at 8x
     s->set_brightness(s, 0);
-    s->set_contrast(s, 2);
-    s->set_saturation(s, -1);    // keep enough colour data for backend enhancement
-    s->set_sharpness(s, 3);      // +3 max
-    s->set_denoise(s, 0);        // denoise BLURS thin strokes. Off.
-
-    s->set_lenc(s, 1);           // lens shading correction (corner brightness)
-    s->set_bpc(s, 1);            // bad pixel
-    s->set_wpc(s, 1);            // white pixel
+    s->set_contrast(s, 1);
+    s->set_saturation(s, 0);
+    s->set_sharpness(s, 3);
+    s->set_denoise(s, 4);                    // OV5640 needs some denoise at 5 MP
+    s->set_lenc(s, 1);
+    s->set_bpc(s, 1);
+    s->set_wpc(s, 1);
     s->set_raw_gma(s, 1);
     s->set_hmirror(s, 0);
     s->set_vflip(s, 0);
     s->set_colorbar(s, 0);
-    // Keep original colour; the backend now makes a high-contrast OCR copy.
     s->set_special_effect(s, 0);
 
-    // ---- Register-level sharpness override (the real magic) ----
-    // Use Espressif's proven OV3660 sharpness path, then add moderate contrast.
-    // Over-driving these registers creates halos that OCR sees as extra marks.
+    delay(120);
+    s->set_reg(s, 0x3022, 0xff, 0x08);       // release motor
+    delay(40);
+    int ack = s->get_reg(s, 0x3023, 0xff);
+    ov5640AfReady = (ack >= 0);
+    Serial.printf("  [AF] firmware probe ack=0x%02x -> %s\n",
+                  ack & 0xff,
+                  ov5640AfReady ? "ready" : "no response (update arduino-esp32 to v3.x)");
+  } else {
+    // ---------- OV3660 (original tuning, kept for backward compat) ----------
+    config.xclk_freq_hz = 10000000;          // can't actually change after init, but documents intent
+    s->set_framesize(s, FRAMESIZE_QXGA);
+    s->set_quality(s, 4);
+    s->set_whitebal(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_wb_mode(s, 3);
+    s->set_exposure_ctrl(s, 1);
+    s->set_aec2(s, 0);
+    s->set_ae_level(s, 1);
+    s->set_aec_value(s, 700);
+    s->set_gain_ctrl(s, 1);
+    s->set_agc_gain(s, 0);
+    s->set_gainceiling(s, (gainceiling_t)1);
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 2);
+    s->set_saturation(s, -1);
+    s->set_sharpness(s, 3);
+    s->set_denoise(s, 0);
+    s->set_lenc(s, 1);
+    s->set_bpc(s, 1);
+    s->set_wpc(s, 1);
+    s->set_raw_gma(s, 1);
+    s->set_hmirror(s, 0);
+    s->set_vflip(s, 0);
+    s->set_colorbar(s, 0);
+    s->set_special_effect(s, 0);
     s->set_reg(s, 0x5308, 0xff, 0x65);
     s->set_reg(s, 0x5300, 0xff, 0x18);
     s->set_reg(s, 0x5301, 0xff, 0x18);
@@ -206,7 +250,7 @@ bool initCamera() {
     s->set_reg(s, 0x5303, 0xff, 0x30);
     s->set_reg(s, 0x5586, 0xff, 0x28);
     s->set_reg(s, 0x5585, 0xff, 0x08);
-    s->set_reg(s, 0x5480, 0xff, 0x01);  // gamma enable (S-curve deepens ink)
+    s->set_reg(s, 0x5480, 0xff, 0x01);
   }
   return true;
 }
@@ -454,14 +498,31 @@ static unsigned long lastRingAction = 0;
 void ringAction(const char* action) {
   if (millis() - lastRingAction < 450) return;  // ignore key-release / bounce reports
   lastRingAction = millis();
-  Serial.printf("[ring] action=%s\n", action);
-  if (!strcmp(action, "capture")) runBurst();   // M button → burst of frames
-  else if (!strcmp(action, "single")) captureAndSend(); // fallback single-shot
+  // VERY visible button print so you can confirm the ring is paired without
+  // staring at hex bytes.
+  Serial.printf("\n>>> [RING BUTTON] %s  (BLE connected=%s) <<<\n",
+                action, ringConnected ? "YES" : "NO");
+  if (!strcmp(action, "capture")) runBurst();
+  else if (!strcmp(action, "single")) captureAndSend();
   else if (!strcmp(action, "next")) postCommand("next");
   else if (!strcmp(action, "prev")) postCommand("prev");
   else if (!strcmp(action, "replay")) postCommand("replay");
   else if (!strcmp(action, "stop")) postCommand("stop");
 }
+
+void printRingStatus() {
+  Serial.println("---- RING / BLE STATUS ----");
+  Serial.printf("  BLE feature compiled in : %s\n", "YES");
+  Serial.printf("  Ring device discovered  : %s\n", ringDevice ? "YES" : "no");
+  Serial.printf("  Ring BLE connected      : %s\n", ringConnected ? "YES" : "no");
+  Serial.printf("  Scan in progress        : %s\n", ringScanRunning ? "yes" : "no");
+  Serial.printf("  Last button (ms ago)    : %lu\n",
+                lastRingAction == 0 ? 0UL : (millis() - lastRingAction));
+  Serial.printf("  Hint: if NOT connected, UNPAIR the ring from your phone first,\n"
+                "        then hold the ring's pair button until its LED flashes.\n");
+  Serial.println("---------------------------");
+}
+
 
 void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");
@@ -556,6 +617,7 @@ void maintainRingBle() {
 #else
 void initRingBle() {}
 void maintainRingBle() {}
+void printRingStatus() { Serial.println("BLE ring host disabled at compile time (ENABLE_BLE_RING=0)."); }
 #endif
 
 
@@ -669,6 +731,9 @@ bool runBurst() {
     Serial.printf("  [burst] locked AEC=%d AGC=%d\n", aec, gain);
     delay(80);
   }
+  // OV5640: run a single-shot AF cycle BEFORE the burst so every frame in the
+  // burst shares the same sharp lens position.
+  ov5640TriggerAf(s, 1200);
 
   unsigned long t0 = millis();
   int seq = 0;
@@ -736,6 +801,11 @@ bool captureAndSend() {
     delay(120);
   }
 
+  // Stage B½ — AUTOFOCUS (OV5640 only). The 78 mm flex DC5640-AF has a VCM
+  // motor that must run a fresh focus cycle for each paper distance.
+  ov5640TriggerAf(s, 1500);
+
+
   // Stage C — BURST OF 8 frames. For a fixed scene at fixed JPEG quality
   // the encoder emits a LARGER file when the frame has MORE high-frequency
   // edge detail (i.e. is sharper). Pick the largest = sharpest. Pro doc-
@@ -801,7 +871,27 @@ void setup() {
   if (!initCamera()) { Serial.println("Halting."); while (true) delay(1000); }
   connectWifi();
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
-  Serial.println("Ready. Type 'ping' to test server, or 'cap' / 'next' / 'prev' in Serial Monitor.");
+  initRingBle();
+  Serial.println("Ready. Serial: 'ping' / 'cap' / 'next' / 'prev' / 'ring' / 'af' / 'audit'.");
+}
+
+void printAudit() {
+  Serial.println("====== SYSTEM AUDIT ======");
+  Serial.printf("  WiFi SSID         : %s\n", WIFI_SSID);
+  Serial.printf("  WiFi status       : %s\n", WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DOWN");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("  Local IP          : %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("  RSSI              : %d dBm\n", WiFi.RSSI());
+  }
+  Serial.printf("  Server host       : https://%s%s\n", SERVER_HOST, SERVER_PATH);
+  Serial.printf("  Sensor PID        : 0x%04x (%s)\n", sensorPid,
+                isOv5640 ? "OV5640 AF" : (sensorPid == 0x3660 ? "OV3660 fixed" : "unknown"));
+  Serial.printf("  OV5640 AF ready   : %s\n", ov5640AfReady ? "YES" : "no");
+  Serial.printf("  Free heap         : %u bytes\n", (unsigned)ESP.getFreeHeap());
+  Serial.printf("  Free PSRAM        : %u bytes\n", (unsigned)ESP.getFreePsram());
+  Serial.printf("  Uptime            : %lu s\n", millis() / 1000UL);
+  printRingStatus();
+  Serial.println("==========================");
 }
 
 void handleSerial() {
@@ -811,11 +901,15 @@ void handleSerial() {
     if (c == '\r') continue;
     if (c == '\n') {
       line.trim();
-      if (line.equalsIgnoreCase("ping"))      { Serial.println("[serial] ping"); checkServer(); }
-      else if (line.equalsIgnoreCase("cap"))  { Serial.println("[serial] cap");  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above"); }
-      else if (line.equalsIgnoreCase("next")) { Serial.println("[serial] next"); postCommand("next"); }
-      else if (line.equalsIgnoreCase("prev")) { Serial.println("[serial] prev"); postCommand("prev"); }
-      else if (line.length() > 0)             { Serial.printf("[serial] unknown: %s\n", line.c_str()); }
+      if      (line.equalsIgnoreCase("ping"))  { Serial.println("[serial] ping"); checkServer(); }
+      else if (line.equalsIgnoreCase("cap"))   { Serial.println("[serial] cap");  Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
+      else if (line.equalsIgnoreCase("burst")) { Serial.println("[serial] burst"); runBurst(); }
+      else if (line.equalsIgnoreCase("next"))  { postCommand("next"); }
+      else if (line.equalsIgnoreCase("prev"))  { postCommand("prev"); }
+      else if (line.equalsIgnoreCase("ring"))  { printRingStatus(); }
+      else if (line.equalsIgnoreCase("af"))    { sensor_t* s = esp_camera_sensor_get(); Serial.println(ov5640TriggerAf(s, 1500) ? "✓ AF locked" : "✗ AF failed (not OV5640 or driver too old)"); }
+      else if (line.equalsIgnoreCase("audit")) { printAudit(); }
+      else if (line.length() > 0)              { Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit)\n", line.c_str()); }
       line = "";
     } else if (line.length() < 32) {
       line += c;
@@ -827,9 +921,10 @@ void loop() {
   if (WiFi.status() != WL_CONNECTED) { connectWifi(); if (WiFi.status() == WL_CONNECTED) startLocalDashboard(); delay(500); return; }
   localServer.handleClient();
   handleSerial();
-  if (pressed(CAPTURE_BTN, &capState,  &capT))  Serial.println(captureAndSend() ? "✓ Capture sent to server" : "✗ Capture NOT sent — check HTTP line above");
-  if (pressed(NEXT_BTN,    &nextState, &nextT)) postCommand("next");
-  if (pressed(PREV_BTN,    &prevState, &prevT)) postCommand("prev");
-  pollTrigger();   // ring remote M button -> capture
+  if (pressed(CAPTURE_BTN, &capState,  &capT))  { Serial.println("[BTN] CAPTURE pressed"); Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
+  if (pressed(NEXT_BTN,    &nextState, &nextT)) { Serial.println("[BTN] NEXT pressed");    postCommand("next"); }
+  if (pressed(PREV_BTN,    &prevState, &prevT)) { Serial.println("[BTN] PREV pressed");    postCommand("prev"); }
+  maintainRingBle();
+  pollTrigger();
   delay(10);
 }

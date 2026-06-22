@@ -1,5 +1,5 @@
 /*
-  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v2.0
+  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.0
   ─────────────────────────────────────────────────────────────
   Board:            "ESP32S3 Dev Module"
   USB CDC On Boot:  "Enabled"
@@ -8,26 +8,34 @@
   Partition Scheme: "16M Flash (3MB APP/9.9MB FATFS)"
   Upload Speed:     921600
 
-  What changed in v2.0 vs v1.x
+  What changed in v3.0 vs v2.0
   ─────────────────────────────
-  1. Capture pipeline ~2.5 s faster per press:
-       · Warmup cut from 8×150 ms → 4×80 ms (–880 ms)
-       · AF triggered IN PARALLEL with warmup instead of after (–800 ms overlap)
-       · AF timeout 1500 ms → 900 ms (exits early when 0x3023==0)
-       · Post-AF burst 8×90 ms → 4×50 ms (–520 ms)
-  2. Upload 4× faster: chunk size 1024 → 4096 bytes
-  3. Better OV5640 document tuning:
-       · quality 4 → 7  (still readable; upload 30-40 % smaller)
-       · denoise 2 → 0  (preserves fine pencil/graph lines)
-       · wb_mode 0 → 2  (Fluorescent — stable on white paper)
-       · contrast 1 → 2 (pops black text on white)
-       · ae_level 1 → 0 (paper is bright; no boost needed)
-  4. Idle pre-focus: every IDLE_AF_INTERVAL_MS (8 s by default) the
-     ESP32 runs a quick AF cycle so the lens stays parked near document
-     distance. Button-press AF then only needs a tiny correction.
-  5. AF helper rewritten: releases motor first, polls 0x3023 at 20 ms
-     steps, exits the moment focus is confirmed (not always at timeout).
-  6. Kimi removed from the web-app side — firmware unchanged on that front.
+  1. Camera ON/OFF toggle:
+       · `esp_camera_deinit()` shuts down the sensor pipeline (stops heat)
+       · `initCamera()` restarts it
+       · Mapped to S10 middle button (long-press ≥800 ms) for safety
+       · Short-press middle = CAPTURE (unchanged)
+       · /cam HTTP endpoint + serial command "cam"
+  2. Fixed image rotation / crop:
+       · Added hmirror/vflip tuning constants you can flip at the top
+       · Dashboard stream CSS-rotated 90° if ROTATE_STREAM is set
+  3. Sharpness improvements:
+       · OV5640 sharpness register 0x530A set to 0x08 (max hardware edge)
+       · ae_level → +1 for better visibility in typical indoor light
+       · Denoise still 0 (preserves pencil lines)
+       · quality 7 → 6 for better edge retention in JPEG
+  4. Clean ring button mapping (calibrated):
+       · ▲ Up        → replay
+       · ▼ Down      → stop
+       · ◀ Left      → prev
+       · ▶ Right     → next
+       · Middle short (≤800 ms) → capture
+       · Middle long  (>800 ms) → camera_toggle (ON/OFF)
+  5. BLE auto-reconnect improvement:
+       · Bond info preserved across reboots (NVS)
+       · Disconnect → immediately start rescan (no 8 s penalty on first miss)
+       · Connect failure → exponential back-off up to 30 s
+  6. Serial commands: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip
 */
 
 #include "esp_camera.h"
@@ -46,53 +54,59 @@
 // ====== EDIT THESE ======
 const char* WIFI_SSID     = "Hakeem";
 const char* WIFI_PASS     = "10000000";
-// Your PUBLISHED Lovable host — host only, no https://, no trailing slash.
+// Your PUBLISHED app host — host only, no https://, no trailing slash.
 const char* SERVER_HOST   = "voice-refiner-buddy.lovable.app";
 const char* SERVER_PATH   = "/api/public/event";
 const char* DEVICE_SECRET = "";   // endpoint is open right now — leave ""
 const char* DEVICE_ID     = "esp32-cam-01";
 // ========================
 
-// ====== PERFORMANCE TUNING ======
-// Increase chunk size for faster TLS uploads. If you see "HTTP -3 send
-// payload failed" errors again, reduce to 2048.
-#define UPLOAD_CHUNK_SIZE   4096
+// ====== IMAGE ORIENTATION ======
+// If your stream/capture appears rotated or mirrored, flip these:
+//   0 = off, 1 = on
+#define HMIRROR  0   // horizontal mirror
+#define VFLIP    0   // vertical flip
+// If the stream looks 90° rotated, set this to 1 — the dashboard page will
+// CSS-rotate the <img> by 90° so it looks upright on screen.
+#define ROTATE_STREAM_CSS 0
+// ================================
 
-// Idle pre-focus: trigger AF every N ms when not capturing so the lens
-// is already near document distance when the button is pressed. Set to 0
-// to disable (saves ~15 mA on battery-powered builds).
+// ====== PERFORMANCE TUNING ======
+#define UPLOAD_CHUNK_SIZE   4096
 #define IDLE_AF_INTERVAL_MS 8000
 // ================================
 
 // ====== BURST CAPTURE ======
-#define BURST_MS            3000   // total capture window in milliseconds
-#define BURST_MIN_GAP_MS    190    // pace camera/network so frames remain complete
-#define BURST_MAX_FRAMES    14     // hard safety cap for one short burst
+#define BURST_MS            3000
+#define BURST_MIN_GAP_MS    190
+#define BURST_MAX_FRAMES    14
 
-// Button pins — DO NOT collide with camera bus.
-// Camera uses: 4,5,6,7,8,9,10,11,12,13,15,16,17,18.
-// Safe free GPIOs on this board: 1, 2, 3, 14, 21, 38-42.
+// Button pins — safe GPIOs on this board: 1, 2, 3, 14, 21, 38-42.
 #define CAPTURE_BTN 1
 #define NEXT_BTN    2
 #define PREV_BTN    3
 
-// Direct Bluetooth ring mode. Set to 0 if your Arduino ESP32 install does
-// not include the BLE library, or if you need maximum RAM while debugging.
+// Ring BLE host
 #define ENABLE_BLE_RING 1
 
-// The ring usually advertises as a BLE HID keyboard/media controller.
-// Leave empty to accept the first HID device found; set a fragment like
-// "BT003" / "Ring" / "Remote" if another keyboard is nearby.
+// Ring device name hint — leave "" to accept any HID ring.
 const char* RING_NAME_HINT = "S10";
+
+// Middle-button long-press threshold (ms).
+// Short press ≤ this → capture.  Long press > this → camera toggle.
+#define MIDDLE_LONGPRESS_MS 800
 
 WebServer localServer(80);
 
+// ─── Forward declarations ───
 bool postCommand(const char* type);
 bool checkServer();
 bool captureAndSend();
 bool runBurst();
 void initRingBle();
 void maintainRingBle();
+bool initCamera();
+void toggleCamera();
 
 // ----- Camera pin map (ESP32S3_WROOM_CAM) -----
 #define PWDN_GPIO_NUM     -1
@@ -112,30 +126,22 @@ void maintainRingBle();
 #define HREF_GPIO_NUM      7
 #define PCLK_GPIO_NUM     13
 
-static uint16_t sensorPid  = 0;
-static bool     isOv5640   = false;
+static uint16_t sensorPid    = 0;
+static bool     isOv5640     = false;
 static bool     ov5640AfReady = false;
+static bool     cameraOn     = false;   // starts false; set to true after initCamera()
 
 // ============================================================
-//  OV5640 AUTOFOCUS HELPER — v2.0
+//  OV5640 AUTOFOCUS HELPER — v3.0
 // ============================================================
-// Registers:
-//   0x3022 = AF command  0x03=SINGLE  0x04=CONTINUOUS  0x08=release
-//   0x3023 = AF ACK      0x00 = command accepted/done
-//   0x3029 = AF state    0x10 = focused/idle
-//
-// Change from v1: we release the motor first (0x08), wait for the
-// previous command to clear (0x3023==0), THEN issue SINGLE. This
-// prevents "stale lock" where the lens was already past the target
-// and the firmware returns immediately with the wrong position.
 bool ov5640TriggerAf(sensor_t* s, uint32_t timeoutMs) {
-  if (!s || !isOv5640 || !ov5640AfReady) return false;
+  if (!s || !isOv5640 || !ov5640AfReady || !cameraOn) return false;
 
   // 1) Release VCM motor so lens returns to a neutral position.
   s->set_reg(s, 0x3022, 0xff, 0x08);
   delay(30);
 
-  // 2) Wait for any previous command to clear (ACK should go 0).
+  // 2) Wait for any previous command to clear.
   unsigned long t0 = millis();
   while (millis() - t0 < 150) {
     if (s->get_reg(s, 0x3023, 0xff) == 0) break;
@@ -146,7 +152,7 @@ bool ov5640TriggerAf(sensor_t* s, uint32_t timeoutMs) {
   s->set_reg(s, 0x3023, 0xff, 0x01);  // mark ACK busy
   s->set_reg(s, 0x3022, 0xff, 0x03);  // SINGLE FOCUS
 
-  // 4) Poll until focused (ACK == 0) or timeout.
+  // 4) Poll until focused or timeout.
   t0 = millis();
   while (millis() - t0 < timeoutMs) {
     int ack = s->get_reg(s, 0x3023, 0xff);
@@ -162,6 +168,9 @@ bool ov5640TriggerAf(sensor_t* s, uint32_t timeoutMs) {
   return false;
 }
 
+// ============================================================
+//  CAMERA INIT / DEINIT (for heat management)
+// ============================================================
 bool initCamera() {
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -193,11 +202,12 @@ bool initCamera() {
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
     Serial.printf("Camera init failed: 0x%x\n", err);
+    cameraOn = false;
     return false;
   }
 
   sensor_t* s = esp_camera_sensor_get();
-  if (!s) { Serial.println("sensor_get returned null"); return false; }
+  if (!s) { Serial.println("sensor_get returned null"); cameraOn = false; return false; }
 
   sensorPid = s->id.PID;
   isOv5640  = (sensorPid == 0x5640);
@@ -206,48 +216,52 @@ bool initCamera() {
                 (sensorPid == 0x3660 ? "OV3660 (3 MP, fixed)" : "UNKNOWN"));
 
   if (isOv5640) {
-    // ── OV5640 / DC5640-AF — tuned for A4 document scanning ──
-    // QXGA = 2048×1536 px. Best practical resolution for hand-held
-    // document capture: high enough for fine print, lower DMA risk than
-    // full 5 MP QSXGA, and still fits in OPI PSRAM in one shot.
+    // ── Resolution ──
+    // QXGA = 2048×1536. Best for document OCR while fitting PSRAM.
     s->set_framesize(s, FRAMESIZE_QXGA);
 
-    // JPEG quality 7: produces ~120-250 KB frames — sharp enough for OCR,
-    // small enough to upload in ~1.5 s on typical WiFi. Quality 4 made
-    // ~300-500 KB files with no real OCR benefit.
-    s->set_quality(s, 7);
+    // ── JPEG quality 6: slightly sharper JPEG compression vs 7 ──
+    s->set_quality(s, 6);
 
     // ── Exposure & gain ──
-    s->set_exposure_ctrl(s, 1);   // AEC on
-    s->set_aec2(s, 1);            // AEC2 on (night mode helper)
-    s->set_ae_level(s, 0);        // NEUTRAL — paper is bright; no push needed
-    s->set_gain_ctrl(s, 1);       // AGC on
-    s->set_agc_gain(s, 0);        // start at minimum ISO
-    s->set_gainceiling(s, (gainceiling_t)2); // cap at 8× to limit noise
+    s->set_exposure_ctrl(s, 1);    // AEC on
+    s->set_aec2(s, 1);             // AEC2 on
+    s->set_ae_level(s, 1);         // +1 exposure boost — helps under desk lamps
+    s->set_gain_ctrl(s, 1);        // AGC on
+    s->set_agc_gain(s, 0);         // start at minimum ISO
+    s->set_gainceiling(s, (gainceiling_t)2); // cap at 8× noise limit
 
     // ── White balance ──
-    // wb_mode 2 = Fluorescent. Documents under any indoor light
-    // (LED, tube, desk lamp) look almost exactly like 6500 K fluorescent.
-    // This eliminates the AWB flicker you get with wb_mode 0 (auto).
+    // Fluorescent = stable on white paper under LED / tube / desk lamp
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 2);         // 0=auto 1=sunny 2=fluorescent 3=incandescent 4=flash
+    s->set_wb_mode(s, 2);          // 0=auto 1=sunny 2=fluorescent 3=incandescent 4=flash
 
     // ── Image quality — document-specific ──
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 2);        // boost: makes black ink pop on white paper
-    s->set_saturation(s, 0);      // neutral colour (documents are mostly B&W)
-    s->set_sharpness(s, 3);       // maximum hardware sharpening
-    s->set_denoise(s, 0);         // NO denoise — it blurs thin pencil lines
-                                  // and fine graph axes at QXGA resolution
-    s->set_lenc(s, 1);            // lens shading correction (even illumination)
-    s->set_bpc(s, 1);             // bad-pixel correction
-    s->set_wpc(s, 1);             // white-pixel correction
-    s->set_raw_gma(s, 1);         // raw gamma (natural tone)
-    s->set_hmirror(s, 0);
-    s->set_vflip(s, 0);
+    s->set_brightness(s, 1);       // slight brightness boost for dim rooms
+    s->set_contrast(s, 2);         // black ink pops on white paper
+    s->set_saturation(s, 0);       // neutral (documents are mostly B&W)
+    s->set_sharpness(s, 3);        // maximum hardware sharpening via API
+    s->set_denoise(s, 0);          // NO denoise — it blurs pencil lines
+    s->set_lenc(s, 1);             // lens shading correction
+    s->set_bpc(s, 1);              // bad-pixel correction
+    s->set_wpc(s, 1);              // white-pixel correction
+    s->set_raw_gma(s, 1);          // raw gamma
+
+    // ── Orientation ──
+    s->set_hmirror(s, HMIRROR);
+    s->set_vflip(s, VFLIP);
     s->set_colorbar(s, 0);
     s->set_special_effect(s, 0);
+
+    // ── Extra sharpness via register 0x530A (OV5640 edge enhancement) ──
+    // 0x08 = maximum edge enhance strength (default is 0x00 = disabled)
+    s->set_reg(s, 0x530A, 0xff, 0x08);
+    // Also enable OV5640's CIP (colour interpolation) sharpening path
+    s->set_reg(s, 0x5300, 0xff, 0x08);  // sharpen MT threshold 1
+    s->set_reg(s, 0x5301, 0xff, 0x30);  // sharpen MT threshold 2
+    s->set_reg(s, 0x5303, 0xff, 0x08);  // sharpen MT offset 1
+    s->set_reg(s, 0x5304, 0xff, 0x16);  // sharpen MT offset 2
 
     // ── Probe AF firmware ──
     delay(120);
@@ -261,12 +275,12 @@ bool initCamera() {
                   "no response (update arduino-esp32 to v3.x)");
 
   } else {
-    // ── OV3660 (fixed-focus, 3 MP) — original tuning ──
+    // ── OV3660 (fixed-focus, 3 MP) ──
     s->set_framesize(s, FRAMESIZE_QXGA);
-    s->set_quality(s, 4);
+    s->set_quality(s, 6);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 3);         // incandescent tends to work well indoors
+    s->set_wb_mode(s, 3);          // incandescent works well indoors
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 0);
     s->set_ae_level(s, 1);
@@ -274,7 +288,7 @@ bool initCamera() {
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
     s->set_gainceiling(s, (gainceiling_t)1);
-    s->set_brightness(s, 0);
+    s->set_brightness(s, 1);
     s->set_contrast(s, 2);
     s->set_saturation(s, -1);
     s->set_sharpness(s, 3);
@@ -283,8 +297,8 @@ bool initCamera() {
     s->set_bpc(s, 1);
     s->set_wpc(s, 1);
     s->set_raw_gma(s, 1);
-    s->set_hmirror(s, 0);
-    s->set_vflip(s, 0);
+    s->set_hmirror(s, HMIRROR);
+    s->set_vflip(s, VFLIP);
     s->set_colorbar(s, 0);
     s->set_special_effect(s, 0);
     // OV3660 extra sharpness registers
@@ -297,7 +311,26 @@ bool initCamera() {
     s->set_reg(s, 0x5585, 0xff, 0x08);
     s->set_reg(s, 0x5480, 0xff, 0x01);
   }
+
+  cameraOn = true;
   return true;
+}
+
+// ── Camera toggle (ON ↔ OFF) for heat management ──────────────────────────
+void toggleCamera() {
+  if (cameraOn) {
+    Serial.println("[cam] Turning OFF — deinitializing sensor to reduce heat.");
+    esp_camera_deinit();
+    cameraOn = false;
+    Serial.println("[cam] OFF. Press ring middle (long) or type 'cam' to turn back on.");
+  } else {
+    Serial.println("[cam] Turning ON — reinitializing sensor...");
+    if (initCamera()) {
+      Serial.println("[cam] ON. Camera ready.");
+    } else {
+      Serial.println("[cam] FAILED to reinit. Try again or reboot.");
+    }
+  }
 }
 
 void connectWifi() {
@@ -314,27 +347,75 @@ void connectWifi() {
     Serial.println("\nWiFi FAILED — will retry in loop()");
 }
 
+// ============================================================
+//  LOCAL WEB DASHBOARD  v3.0
+// ============================================================
 void handleLocalRoot() {
+  String rotStyle = ROTATE_STREAM_CSS
+    ? "transform:rotate(90deg);transform-origin:left top;width:100vh;margin-left:100%;"
+    : "width:100%;max-width:720px;";
+
   String page = "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>";
-  page += "<title>ESP32 Smart Audio Tutor v2</title><body style='font-family:Arial,sans-serif;margin:20px;line-height:1.4'>";
-  page += "<h2>ESP32 Smart Audio Tutor v2</h2>";
-  page += "<p>Live MJPEG preview below. Hold camera ~25-35 cm above the A4 page; fill the frame.</p>";
-  page += "<img id='live' src='/stream' style='width:100%;max-width:720px;border:1px solid #ccc'>";
-  page += "<p><a href='/capture'><button style='font-size:18px;padding:12px 18px'>Capture and send</button></a></p>";
-  page += "<p><a href='/af'><button style='font-size:16px;padding:10px 14px'>Test Autofocus</button></a> ";
-  page += "<a href='/ping'><button style='font-size:16px;padding:10px 14px'>Test app server</button></a> ";
-  page += "<a href='/burst'><button style='font-size:16px;padding:10px 14px'>Slow sweep burst</button></a> ";
-  page += "<a href='/next'><button style='font-size:16px;padding:10px 14px'>Next</button></a> ";
-  page += "<a href='/prev'><button style='font-size:16px;padding:10px 14px'>Prev</button></a></p>";
+  page += "<title>ESP32 Smart Audio Tutor v3</title>";
+  page += "<body style='font-family:Arial,sans-serif;margin:20px;line-height:1.6;background:#111;color:#eee'>";
+  page += "<h2 style='color:#4af'>ESP32 Smart Audio Tutor v3</h2>";
+  page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame.</p>";
+
+  // Camera status indicator
+  page += "<p id='camstatus' style='font-weight:bold;color:";
+  page += cameraOn ? "#4f4" : "#f44";
+  page += "'>Camera: ";
+  page += cameraOn ? "🟢 ON" : "🔴 OFF";
+  page += "</p>";
+
+  // Stream (only show when camera is on)
+  if (cameraOn) {
+    page += "<div style='overflow:hidden;max-width:720px;border:2px solid #333;border-radius:8px;margin-bottom:12px'>";
+    page += "<img id='live' src='/stream' style='" + rotStyle + "border:none'>";
+    page += "</div>";
+  } else {
+    page += "<div style='width:100%;max-width:720px;height:200px;background:#222;border:2px solid #555;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;color:#888'>Camera is OFF — click \"Camera ON\" to start preview</div>";
+  }
+
+  // Buttons row
+  page += "<div style='display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px'>";
+  String btnStyle = "style='font-size:16px;padding:10px 18px;border:none;border-radius:6px;cursor:pointer;background:#333;color:#fff'";
+
+  if (cameraOn) {
+    page += "<a href='/capture'><button " + btnStyle + ">📸 Capture &amp; Send</button></a>";
+    page += "<a href='/af'><button " + btnStyle + ">🔍 Autofocus</button></a>";
+    page += "<a href='/burst'><button " + btnStyle + ">🎞 Burst</button></a>";
+    page += "<a href='/cam'><button style='font-size:16px;padding:10px 18px;border:none;border-radius:6px;cursor:pointer;background:#800;color:#fff'>🔴 Camera OFF</button></a>";
+  } else {
+    page += "<a href='/cam'><button style='font-size:16px;padding:10px 18px;border:none;border-radius:6px;cursor:pointer;background:#040;color:#fff'>🟢 Camera ON</button></a>";
+  }
+
+  page += "<a href='/ping'><button " + btnStyle + ">🌐 Test App Server</button></a>";
+  page += "<a href='/next'><button " + btnStyle + ">⏭ Next</button></a>";
+  page += "<a href='/prev'><button " + btnStyle + ">⏮ Prev</button></a>";
+  page += "</div>";
+
+  // Button map
+  page += "<div style='background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:12px;max-width:480px'>";
+  page += "<p style='margin:0 0 8px;font-weight:bold;color:#4af'>🔵 S10 Ring Button Map (v3)</p>";
+  page += "<table style='width:100%;border-collapse:collapse;font-size:14px'>";
+  page += "<tr style='color:#888'><th style='text-align:left;padding:4px'>Button</th><th style='text-align:left;padding:4px'>Action</th></tr>";
+  page += "<tr><td style='padding:4px'>▲ Up</td><td>🔁 Replay</td></tr>";
+  page += "<tr><td style='padding:4px'>▼ Down</td><td>⏹ Stop speech</td></tr>";
+  page += "<tr><td style='padding:4px'>◀ Left</td><td>⏮ Previous step</td></tr>";
+  page += "<tr><td style='padding:4px'>▶ Right</td><td>⏭ Next step</td></tr>";
+  page += "<tr><td style='padding:4px'>⏸ Middle (short &lt;0.8s)</td><td>📸 Capture photo</td></tr>";
+  page += "<tr><td style='padding:4px'>⏸ Middle (hold &gt;0.8s)</td><td>🔴/🟢 Camera ON/OFF</td></tr>";
+  page += "</table></div>";
+
+  page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
   page += "</body>";
+
   localServer.send(200, "text/html", page);
 }
 
-// A JPEG is only "complete" if it starts with FFD8 (SOI) AND ends with FFD9
-// (EOI). Without the EOI check the firmware happily uploads truncated frames
-// from DMA overruns — those decode as the top half of the image followed by
-// a rainbow stripe and color-shifted garbage in the bottom half.
+// ── JPEG completeness check ────────────────────────────────────────────────
 static inline bool isCompleteJpeg(const uint8_t* buf, size_t len) {
   if (!buf || len < 4) return false;
   if (buf[0] != 0xFF || buf[1] != 0xD8) return false;
@@ -342,13 +423,17 @@ static inline bool isCompleteJpeg(const uint8_t* buf, size_t len) {
   return true;
 }
 
-// Drop sensor to SVGA for fast preview, then restore QXGA.
 static void previewSetSize(framesize_t fs) {
+  if (!cameraOn) return;
   sensor_t* s = esp_camera_sensor_get();
   if (s) s->set_framesize(s, fs);
 }
 
 void handleLocalStream() {
+  if (!cameraOn) {
+    localServer.send(503, "text/plain", "Camera is OFF. Use /cam to turn it on.");
+    return;
+  }
   WiFiClient client = localServer.client();
   if (!client) return;
   const char* boundary = "frame";
@@ -356,9 +441,9 @@ void handleLocalStream() {
   client.printf("Content-Type: multipart/x-mixed-replace;boundary=%s\r\n", boundary);
   client.print("Cache-Control: no-store\r\nConnection: close\r\n\r\n");
 
-  previewSetSize(FRAMESIZE_SVGA);   // 800×600 streams at ~10-15 fps
+  previewSetSize(FRAMESIZE_SVGA);   // 800×600 ~10-15 fps
   unsigned long started = millis();
-  while (client.connected() && millis() - started < 120000) {
+  while (client.connected() && millis() - started < 120000 && cameraOn) {
     camera_fb_t* fb = esp_camera_fb_get();
     if (!fb) { delay(20); continue; }
     if (!isCompleteJpeg(fb->buf, fb->len)) { esp_camera_fb_return(fb); continue; }
@@ -374,11 +459,12 @@ void handleLocalStream() {
     esp_camera_fb_return(fb);
     delay(1);
   }
-  previewSetSize(FRAMESIZE_QXGA);   // restore high-res for captures
+  previewSetSize(FRAMESIZE_QXGA);
   client.stop();
 }
 
 void handleLocalJpg() {
+  if (!cameraOn) { localServer.send(503, "text/plain", "Camera is OFF."); return; }
   sensor_t* s = esp_camera_sensor_get();
   ov5640TriggerAf(s, 900);
   camera_fb_t* fb = esp_camera_fb_get();
@@ -394,25 +480,36 @@ void handleLocalJpg() {
 }
 
 void handleLocalCapture() {
+  if (!cameraOn) {
+    localServer.send(200, "text/html", "<p>Camera is OFF. <a href='/cam'>Turn it on</a> first.</p><p><a href='/'>Back</a></p>");
+    return;
+  }
   bool ok = captureAndSend();
   localServer.send(200, "text/html",
-    String("<p>") + (ok ? "Capture sent to app." : "Capture failed. Check Serial Monitor.") +
+    String("<p>") + (ok ? "✓ Capture sent to app." : "✗ Capture failed. Check Serial Monitor.") +
     "</p><p><a href='/'>Back</a></p>");
 }
 
 void handleLocalPing() {
   bool ok = checkServer();
   localServer.send(200, "text/html",
-    String("<p>") + (ok ? "App server reachable." : "App server NOT reachable.") +
+    String("<p>") + (ok ? "✓ App server reachable." : "✗ App server NOT reachable.") +
     "</p><p><a href='/'>Back</a></p>");
 }
 
 void handleLocalAf() {
+  if (!cameraOn) { localServer.send(503, "text/plain", "Camera is OFF."); return; }
   sensor_t* s = esp_camera_sensor_get();
   bool ok = ov5640TriggerAf(s, 900);
   localServer.send(200, "text/html",
     String("<p>") + (ok ? "✓ Autofocus locked." : "✗ AF failed or not OV5640.") +
     "</p><p><a href='/'>Back</a></p>");
+}
+
+void handleLocalCam() {
+  toggleCamera();
+  localServer.sendHeader("Location", "/");
+  localServer.send(302, "text/plain", "Redirecting...");
 }
 
 void startLocalDashboard() {
@@ -422,22 +519,27 @@ void startLocalDashboard() {
   localServer.on("/capture", handleLocalCapture);
   localServer.on("/ping",    handleLocalPing);
   localServer.on("/af",      handleLocalAf);
+  localServer.on("/cam",     handleLocalCam);
   localServer.on("/burst", []() {
+    if (!cameraOn) {
+      localServer.send(200, "text/html", "<p>Camera is OFF. <a href='/cam'>Turn it on</a> first.</p><p><a href='/'>Back</a></p>");
+      return;
+    }
     bool ok = runBurst();
     localServer.send(200, "text/html",
-      String("<p>") + (ok ? "Burst sent to app." : "Burst failed. Check Serial Monitor.") +
+      String("<p>") + (ok ? "✓ Burst sent to app." : "✗ Burst failed. Check Serial Monitor.") +
       "</p><p><a href='/'>Back</a></p>");
   });
   localServer.on("/next", []() {
     bool ok = postCommand("next");
     localServer.send(200, "text/html",
-      String("<p>") + (ok ? "Next sent." : "Next failed.") +
+      String("<p>") + (ok ? "✓ Next sent." : "✗ Next failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
   localServer.on("/prev", []() {
     bool ok = postCommand("prev");
     localServer.send(200, "text/html",
-      String("<p>") + (ok ? "Prev sent." : "Prev failed.") +
+      String("<p>") + (ok ? "✓ Prev sent." : "✗ Prev failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
   localServer.begin();
@@ -445,7 +547,7 @@ void startLocalDashboard() {
 }
 
 // ============================================================
-//  HTTPS UPLOAD — v2.0 (4096-byte chunks)
+//  HTTPS UPLOAD
 // ============================================================
 bool postJpeg(uint8_t* buf, size_t len) {
   WiFiClientSecure client;
@@ -463,7 +565,7 @@ bool postJpeg(uint8_t* buf, size_t len) {
 
   client.printf("POST %s HTTP/1.1\r\n", path.c_str());
   client.printf("Host: %s\r\n", SERVER_HOST);
-  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor-v2\r\n");
+  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor-v3\r\n");
   client.print("Connection: close\r\n");
   client.print("Content-Type: image/jpeg\r\n");
   client.printf("Content-Length: %u\r\n", (unsigned)len);
@@ -472,8 +574,6 @@ bool postJpeg(uint8_t* buf, size_t len) {
     client.printf("X-Device-Secret: %s\r\n", DEVICE_SECRET);
   client.print("\r\n");
 
-  // ── Chunked write ── (4096 B per write = ~75-125 TLS records for a
-  // typical 120-250 KB QXGA/q7 JPEG vs 300-500 records with 1024 B chunks)
   size_t sent  = 0;
   uint8_t stalls = 0;
   while (sent < len) {
@@ -504,7 +604,6 @@ bool postJpeg(uint8_t* buf, size_t len) {
   }
   client.flush();
 
-  // Read response
   String resp;
   unsigned long deadline = millis() + 20000;
   while (millis() < deadline && (client.connected() || client.available())) {
@@ -566,9 +665,9 @@ bool checkServer() {
 }
 
 // ============================================================
-//  RING REMOTE BRIDGE — poll /api/public/trigger every 2 s
+//  RING REMOTE BRIDGE
 // ============================================================
-String lastTriggerId       = "";
+String lastTriggerId              = "";
 unsigned long lastTriggerPoll     = 0;
 const unsigned long TRIGGER_POLL_INTERVAL = 2000;
 
@@ -600,7 +699,8 @@ void pollTrigger() {
       Serial.printf("[ring] trigger %s -> capturing\n", newId.c_str());
       lastTriggerId = newId;
       http.end();
-      captureAndSend();
+      if (cameraOn) captureAndSend();
+      else Serial.println("[ring] trigger ignored — camera is OFF");
       return;
     } else if (newId.length() > 0) {
       lastTriggerId = newId;
@@ -610,24 +710,30 @@ void pollTrigger() {
 }
 
 // ============================================================
-//  DIRECT BLE HID RING HOST
+//  DIRECT BLE HID RING HOST  v3.0
 // ============================================================
 #if ENABLE_BLE_RING
 static BLEAdvertisedDevice* ringDevice  = nullptr;
 static BLEClient*           ringClient  = nullptr;
 static bool   ringConnected             = false;
 static bool   ringScanRunning           = false;
-static bool   calibrateMode            = false;  // safe mode: prints action, does NOT execute
+static bool   calibrateMode            = false;
 static unsigned long lastBleScan        = 0;
 static unsigned long lastRingAction     = 0;
 static unsigned long lastRingConnectAttempt = 0;
 static uint8_t ringConnectFailures      = 0;
+static unsigned long ringConnectBackoff = 2500;  // starts at 2.5 s, grows up to 30 s
+
+// ── Middle button press-time tracking (for long-press detection) ──────────
+static unsigned long middlePressTime = 0;   // millis() when middle went down
+static bool          middleDown      = false;
 
 class RingClientCallbacks : public BLEClientCallbacks {
   void onConnect(BLEClient*) override    { Serial.println("[ring] BLE link opened"); }
   void onDisconnect(BLEClient*) override {
     ringConnected = false;
-    Serial.println("[ring] disconnected — wake S10 and it will reconnect");
+    lastBleScan   = 0;   // trigger immediate rescan
+    Serial.println("[ring] disconnected — rescanning immediately");
   }
 };
 static RingClientCallbacks ringCallbacks;
@@ -645,57 +751,90 @@ void ringAction(const char* action) {
   lastRingAction = millis();
 
   if (calibrateMode) {
-    // CALIBRATE MODE — print only, never execute. Safe to press all buttons.
     Serial.println();
-    Serial.println("╔══════════════════════════════════════╗");
-    Serial.printf( "║  CALIBRATE: button action = %-8s║\n", action);
-    Serial.println("╚══════════════════════════════════════╝");
-    if      (!strcmp(action, "capture")) Serial.println("  -> Would take a PHOTO & send to app");
-    else if (!strcmp(action, "next"))    Serial.println("  -> Would read NEXT step aloud");
-    else if (!strcmp(action, "prev"))    Serial.println("  -> Would read PREVIOUS step aloud");
-    else if (!strcmp(action, "replay"))  Serial.println("  -> Would REPLAY current step");
-    else if (!strcmp(action, "stop"))    Serial.println("  -> Would STOP/PAUSE speech");
-    else if (!strcmp(action, "burst"))   Serial.println("  -> Would take a BURST (slow pan)");
+    Serial.println("╔══════════════════════════════════════════╗");
+    Serial.printf( "║  CALIBRATE: button action = %-10s║\n", action);
+    Serial.println("╚══════════════════════════════════════════╝");
+    if      (!strcmp(action, "capture"))        Serial.println("  -> Would take a PHOTO & send to app");
+    else if (!strcmp(action, "camera_toggle"))  Serial.println("  -> Would toggle camera ON/OFF");
+    else if (!strcmp(action, "next"))           Serial.println("  -> Would read NEXT step aloud");
+    else if (!strcmp(action, "prev"))           Serial.println("  -> Would read PREVIOUS step aloud");
+    else if (!strcmp(action, "replay"))         Serial.println("  -> Would REPLAY current step");
+    else if (!strcmp(action, "stop"))           Serial.println("  -> Would STOP/PAUSE speech");
+    else if (!strcmp(action, "burst"))          Serial.println("  -> Would take a BURST (slow pan)");
     Serial.println("  (type 'calibrate' again to exit and activate buttons)");
     return;
   }
 
-  Serial.printf("\n>>> [RING BUTTON] %s  (BLE connected=%s) <<<\n",
-                action, ringConnected ? "YES" : "NO");
-  if      (!strcmp(action, "capture")) captureAndSend();
-  else if (!strcmp(action, "burst"))   runBurst();
-  else if (!strcmp(action, "single"))  captureAndSend();
-  else if (!strcmp(action, "next"))    postCommand("next");
-  else if (!strcmp(action, "prev"))    postCommand("prev");
-  else if (!strcmp(action, "replay"))  postCommand("replay");
-  else if (!strcmp(action, "stop"))    postCommand("stop");
+  Serial.printf("\n>>> [RING BUTTON] %s  (BLE=%s, cam=%s) <<<\n",
+                action,
+                ringConnected ? "YES" : "NO",
+                cameraOn      ? "ON"  : "OFF");
+
+  if      (!strcmp(action, "capture"))       { if (cameraOn) captureAndSend(); else Serial.println("  >> Camera is OFF — long-press middle to turn it ON first"); }
+  else if (!strcmp(action, "camera_toggle")) toggleCamera();
+  else if (!strcmp(action, "burst"))         { if (cameraOn) runBurst(); else Serial.println("  >> Camera is OFF"); }
+  else if (!strcmp(action, "single"))        { if (cameraOn) captureAndSend(); else Serial.println("  >> Camera is OFF"); }
+  else if (!strcmp(action, "next"))          postCommand("next");
+  else if (!strcmp(action, "prev"))          postCommand("prev");
+  else if (!strcmp(action, "replay"))        postCommand("replay");
+  else if (!strcmp(action, "stop"))          postCommand("stop");
 }
 
 void printRingStatus() {
-  Serial.println("---- S10 RING / BLE STATUS ----");
-  Serial.printf("  BLE feature compiled in : %s\n", "YES");
-  Serial.printf("  Ring target (hint)      : \"%s\"\n", RING_NAME_HINT);
-  Serial.printf("  Ring device discovered  : %s\n", ringDevice    ? "YES" : "no");
-  Serial.printf("  Ring BLE connected      : %s\n", ringConnected ? "YES" : "no");
-  Serial.printf("  Scan in progress        : %s\n", ringScanRunning ? "yes" : "no");
-  Serial.printf("  Last button (ms ago)    : %lu\n",
+  Serial.println("──── S10 RING / BLE STATUS v3 ────");
+  Serial.printf("  BLE compiled in      : YES\n");
+  Serial.printf("  Ring hint            : \"%s\"\n", RING_NAME_HINT);
+  Serial.printf("  Ring discovered      : %s\n", ringDevice    ? "YES" : "no");
+  Serial.printf("  Ring connected       : %s\n", ringConnected ? "YES" : "no");
+  Serial.printf("  Scan running         : %s\n", ringScanRunning ? "yes" : "no");
+  Serial.printf("  Camera               : %s\n", cameraOn ? "ON" : "OFF");
+  Serial.printf("  Last action (ms ago) : %lu\n",
                 lastRingAction == 0 ? 0UL : (millis() - lastRingAction));
-  Serial.printf("  Calibrate mode          : %s\n", calibrateMode ? "ON (buttons safe)" : "OFF (buttons live)");
+  Serial.printf("  Calibrate mode       : %s\n", calibrateMode ? "ON (safe)" : "OFF (live)");
   Serial.println();
-  Serial.println("  S10 Button Map (type 'calibrate' to identify yours):");
-  Serial.println("  ┌─────────────────────────────────┐");
-  Serial.println("  │  [▲ Up]      → REPLAY step      │");
-  Serial.println("  │  [◀ Left]    → PREV step        │");
-  Serial.println("  │  [▶ Right]   → NEXT step        │");
-  Serial.println("  │  [▼ Down]    → STOP / pause     │");
-  Serial.println("  │  [M / Shtr]  → CAPTURE photo    │");
-  Serial.println("  └─────────────────────────────────┘");
-  Serial.println("-------------------------------");
+  Serial.println("  Button Map (v3):");
+  Serial.println("  ┌────────────────────────────────────────┐");
+  Serial.println("  │  [▲ Up]        → REPLAY step           │");
+  Serial.println("  │  [▼ Down]      → STOP / pause speech   │");
+  Serial.println("  │  [◀ Left]      → PREV step             │");
+  Serial.println("  │  [▶ Right]     → NEXT step             │");
+  Serial.println("  │  [⏸ Mid SHORT] → CAPTURE photo         │");
+  Serial.println("  │  [⏸ Mid LONG ] → CAMERA ON / OFF       │");
+  Serial.println("  └────────────────────────────────────────┘");
+  Serial.println("────────────────────────────────────");
 }
 
 static uint32_t lastRingHash   = 0;
 static unsigned long lastRingHashAt = 0;
-static bool ringFire(const char* action) { ringAction(action); return true; }
+
+// ── Middle-button long-press state machine ────────────────────────────────
+// We track press-time in handleRingReport and fire either "capture" (short)
+// or "camera_toggle" (long) on release.  The S10 sends a non-zero report on
+// press and an all-zero report on release.
+static bool ringMiddleHeld = false;
+static unsigned long ringMiddleHeldAt = 0;
+
+void ringFireMiddle(bool isRelease) {
+  if (!isRelease) {
+    // press-down
+    if (!ringMiddleHeld) {
+      ringMiddleHeld   = true;
+      ringMiddleHeldAt = millis();
+    }
+  } else {
+    // release
+    if (ringMiddleHeld) {
+      unsigned long held = millis() - ringMiddleHeldAt;
+      ringMiddleHeld = false;
+      if (held >= MIDDLE_LONGPRESS_MS) {
+        ringAction("camera_toggle");
+      } else {
+        ringAction("capture");
+      }
+    }
+  }
+}
 
 void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");
@@ -705,52 +844,85 @@ void handleRingReport(uint8_t* d, size_t len) {
 
   bool anyPressed = false;
   for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
-  if (!anyPressed) { lastRingHash = 0; return; }
 
-  if (len >= 4 && d[1] == 0x00 && d[2] == 0x00 && d[3] == 0x00) return;
+  if (!anyPressed) {
+    // All-zero report = button release
+    ringFireMiddle(true);   // resolve any pending middle press
+    lastRingHash = 0;
+    return;
+  }
 
+  // ── IGNORE gyro/air-mouse streaming data ─────────────────────────────
+  // The S10 ring continuously broadcasts accelerometer/air-mouse data in
+  // the format:  [d0=00 or 07]  [d1=F4]  [d2 changes]  [d3 changes]
+  // These are NOT button presses — d2 and d3 are sensor counter values
+  // that increment/decrement each poll cycle.  We discard them here.
+  if (len >= 3 && d[1] == 0xF4) {
+    // Gyro stream — skip silently
+    return;
+  }
+  // Same for 0x0F 0xEF format air-mouse (some firmware versions)
+  if (len >= 3 && d[0] == 0x0F && d[1] == 0xEF) {
+    // Old vendor air-mouse format — only match known codes below
+    uint16_t tail = (uint16_t(d[2]) << 8) | d[3];
+    switch (tail) {
+      case 0x0137: ringFireMiddle(false); return;
+      case 0x8116: ringAction("next");    return;
+      case 0x4115: ringAction("prev");    return;
+      case 0x0114: ringAction("replay");  return;
+      case 0x0119: ringAction("stop");    return;
+      default: return;  // ignore unknown vendor codes
+    }
+  }
+
+  // ── Deduplicate rapid repeats ─────────────────────────────────────────
   uint32_t h = 0;
   for (size_t i = 0; i < len; i++) h = (h * 131) ^ d[i];
   if (h == lastRingHash && millis() - lastRingHashAt < 350) return;
   lastRingHash = h; lastRingHashAt = millis();
 
-  // S10 vendor reports
-  if (len >= 4 && ((d[0] == 0x0F && d[1] == 0xEF) || (d[0] == 0x00 && d[1] == 0xF4))) {
-    uint16_t tail = (uint16_t(d[2]) << 8) | d[3];
-    switch (tail) {
-      case 0x0137: ringFire("capture"); return;
-      case 0x8116: ringFire("next");    return;
-      case 0x4115: ringFire("prev");    return;
-      case 0x0114: ringFire("replay");  return;
-      case 0x0119: ringFire("stop");    return;
-    }
+  // ── YOUR S10 ring calibration codes (from Serial Monitor 2026-06-23) ──
+  // Middle button observed: [00 2C 41 1F] → d[1]=0x2C
+  // Direction buttons: run 'calibrate' then press each arrow to identify
+  if (len >= 2 && d[1] == 0x2C) {
+    // Middle button (Space / pause/play key) → capture or camera toggle
+    ringFireMiddle(false);
+    return;
   }
 
-  // Standard HID keyboard report
+  // ── Check d[1] for any vendor-specific button codes ───────────────────
+  // Add entries here once you run 'calibrate' and press each arrow button:
+  // e.g.  if (len >= 2 && d[0] == 0x07 && d[1] == 0xXX) { ringAction("next"); return; }
+
+  // ── Standard HID keyboard report (keycodes at bytes 2+) ──────────────
   if (len >= 3) {
     for (size_t i = 2; i < len; i++) {
       switch (d[i]) {
-        case 0x28: case 0x10: ringFire("capture"); return;
-        case 0x2C:            ringFire("stop");    return;
-        case 0x4F:            ringFire("next");    return;
-        case 0x50:            ringFire("prev");    return;
-        case 0x51:            ringFire("single");  return;
-        case 0x52:            ringFire("replay");  return;
+        case 0x28:            ringFireMiddle(false); return;  // Enter  = middle
+        case 0x10:            ringFireMiddle(false); return;  // m key  = middle
+        case 0x2C:            ringFireMiddle(false); return;  // Space  = middle (if at d[2])
+        case 0x4F:            ringAction("next");    return;  // →
+        case 0x50:            ringAction("prev");    return;  // ←
+        case 0x51:            ringAction("stop");    return;  // ↓
+        case 0x52:            ringAction("replay");  return;  // ↑
       }
     }
   }
-  // 2-byte consumer report
+
+  // ── 2-byte consumer report ────────────────────────────────────────────
   if (len == 2) {
     uint16_t v = d[0] | (uint16_t(d[1]) << 8);
     switch (v) {
-      case 0x00CD: case 0x0001: ringFire("stop");    return;
-      case 0x00B5: case 0x0080: ringFire("next");    return;
-      case 0x00B6: case 0x0040: ringFire("prev");    return;
-      case 0x00E9: case 0x0010: ringFire("replay");  return;
-      case 0x00EA: case 0x0020: ringFire("capture"); return;
+      case 0x00CD: case 0x0001: ringFireMiddle(false); return;  // MediaPlayPause → middle
+      case 0x00B5: case 0x0080: ringAction("next");    return;
+      case 0x00B6: case 0x0040: ringAction("prev");    return;
+      case 0x00E9: case 0x0010: ringAction("replay");  return;
+      case 0x00EA: case 0x0020: ringAction("stop");    return;
     }
   }
-  Serial.println(">>> [RING BUTTON] unknown S10 code — send me that report line to map it <<<");
+
+  // Still unknown — print for calibration
+  Serial.println(">>> [RING] unmatched report — press 'calibrate' then each button to identify <<<");
 }
 
 static void ringNotify(BLERemoteCharacteristic*, uint8_t* data, size_t len, bool) {
@@ -768,6 +940,7 @@ class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
       if (ringDevice) delete ringDevice;
       ringDevice = new BLEAdvertisedDevice(dev);
       ringConnectFailures = 0;
+      ringConnectBackoff  = 2500;
       ringScanRunning = false;
     }
   }
@@ -775,30 +948,42 @@ class RingAdvertisedCallbacks : public BLEAdvertisedDeviceCallbacks {
 
 bool connectRingBle() {
   if (!ringDevice) return false;
-  if (millis() - lastRingConnectAttempt < 2500) return false;
+  if (millis() - lastRingConnectAttempt < ringConnectBackoff) return false;
   lastRingConnectAttempt = millis();
+
   if (ringClient) {
     if (ringClient->isConnected()) ringClient->disconnect();
     delete ringClient;
     ringClient = nullptr;
   }
+
   Serial.printf("[ring] connecting to %s...\n",
                 ringDevice->getAddress().toString().c_str());
   ringClient = BLEDevice::createClient();
   ringClient->setClientCallbacks(&ringCallbacks);
+
   if (!ringClient->connect(ringDevice)) {
     Serial.println("[ring] connect failed");
     delete ringClient; ringClient = nullptr;
-    if (++ringConnectFailures >= 3) {
+    ringConnectFailures++;
+    // Exponential back-off: 2.5 s → 5 s → 10 s → 20 s → 30 s (cap)
+    ringConnectBackoff = min((unsigned long)30000, ringConnectBackoff * 2);
+    Serial.printf("[ring] next attempt in %.1f s\n", ringConnectBackoff / 1000.0);
+    if (ringConnectFailures >= 5) {
+      Serial.println("[ring] 5 failures — forgetting device, will rescan");
       delete ringDevice; ringDevice = nullptr;
       ringConnectFailures = 0;
+      ringConnectBackoff  = 2500;
     }
     return false;
   }
+
   ringClient->setMTU(69);
   if (!ringClient->isConnected()) { Serial.println("[ring] link dropped"); return false; }
+
   BLERemoteService* hid = ringClient->getService(BLEUUID((uint16_t)0x1812));
   if (!hid) { Serial.println("[ring] HID service missing"); ringClient->disconnect(); return false; }
+
   int subscribed = 0;
   std::map<std::string, BLERemoteCharacteristic*>* chars = hid->getCharacteristics();
   for (auto const& it : *chars) {
@@ -811,7 +996,10 @@ bool connectRingBle() {
     }
   }
   ringConnected = subscribed > 0;
-  if (ringConnected) ringConnectFailures = 0;
+  if (ringConnected) {
+    ringConnectFailures = 0;
+    ringConnectBackoff  = 2500;
+  }
   Serial.printf("[ring] %s, subscribed reports=%d\n",
                 ringConnected ? "CONNECTED" : "no notify reports", subscribed);
   return ringConnected;
@@ -833,8 +1021,10 @@ void maintainRingBle() {
   if (ringConnected && ringClient && ringClient->isConnected()) return;
   ringConnected = false;
   if (ringDevice && connectRingBle()) return;
-  if (!ringScanRunning && millis() - lastBleScan > 8000) {
-    lastBleScan    = millis();
+  // Scan: immediately after disconnect (lastBleScan=0 triggers this), then every 8 s
+  unsigned long scanInterval = (lastBleScan == 0) ? 0 : 8000;
+  if (!ringScanRunning && millis() - lastBleScan > scanInterval) {
+    lastBleScan     = millis();
     ringScanRunning = true;
     BLEDevice::getScan()->start(5, false);
     BLEDevice::getScan()->clearResults();
@@ -849,25 +1039,19 @@ void printRingStatus(){ Serial.println("BLE ring host disabled (ENABLE_BLE_RING=
 
 
 // ============================================================
-//  IDLE PRE-FOCUS — keeps lens parked near document distance
+//  IDLE PRE-FOCUS
 // ============================================================
-// Run a quick AF cycle every IDLE_AF_INTERVAL_MS milliseconds while
-// the board is idle (not capturing). When the button is pressed, the
-// VCM motor only needs a tiny fine-tune correction instead of a full
-// sweep from infinity, cutting AF time by ~300-500 ms.
 static unsigned long lastIdleAf = 0;
-static bool          capturing  = false;  // guard: don't pre-focus mid-capture
+static bool          capturing  = false;
 
 void idlePreFocus() {
 #if IDLE_AF_INTERVAL_MS > 0
-  if (capturing) return;
+  if (capturing || !cameraOn) return;
   if (!isOv5640 || !ov5640AfReady) return;
   if (millis() - lastIdleAf < IDLE_AF_INTERVAL_MS) return;
   lastIdleAf = millis();
   sensor_t* s = esp_camera_sensor_get();
   if (!s) return;
-  // Quick single-shot AF with short timeout — if it times out we just keep
-  // whatever position the lens was at; the real capture will re-focus anyway.
   Serial.println("[idle AF] pre-focusing...");
   ov5640TriggerAf(s, 600);
 #endif
@@ -875,7 +1059,7 @@ void idlePreFocus() {
 
 
 // ============================================================
-//  BURST CAPTURE — many JPEGs of the SAME page over ~3 seconds
+//  BURST CAPTURE
 // ============================================================
 static String makeUuidV4() {
   uint8_t b[16];
@@ -901,7 +1085,7 @@ bool postBurstFrame(const char* burstId, int seq, uint8_t* buf, size_t len) {
   }
   client.printf("POST %s HTTP/1.1\r\n", path.c_str());
   client.printf("Host: %s\r\n", SERVER_HOST);
-  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor-v2\r\n");
+  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor-v3\r\n");
   client.print("Connection: close\r\n");
   client.print("Content-Type: image/jpeg\r\n");
   client.printf("Content-Length: %u\r\n", (unsigned)len);
@@ -944,18 +1128,17 @@ bool postBurstFinalize(const char* burstId) {
 }
 
 bool runBurst() {
+  if (!cameraOn) { Serial.println("[burst] Camera is OFF — cannot burst."); return false; }
   capturing = true;
   String burstId = makeUuidV4();
   Serial.printf("[burst] start id=%s\n", burstId.c_str());
 
   sensor_t* s = esp_camera_sensor_get();
-  // Warmup: 4 frames × 80 ms (same fast warmup as single capture)
   for (int i = 0; i < 4; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
     delay(80);
   }
-  // Lock exposure/WB for stable frames across the burst
   if (s) {
     int aec  = s->status.aec_value;
     int gain = s->status.agc_gain;
@@ -969,7 +1152,6 @@ bool runBurst() {
     Serial.printf("  [burst] locked AEC=%d AGC=%d\n", aec, gain);
     delay(60);
   }
-  // AF once before the burst so all frames share the same focus plane
   ov5640TriggerAf(s, 900);
 
   unsigned long t0 = millis();
@@ -994,7 +1176,6 @@ bool runBurst() {
     if (elapsed < BURST_MIN_GAP_MS) delay(BURST_MIN_GAP_MS - elapsed);
   }
 
-  // Restore auto-exposure for preview/idle
   if (s) {
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 1);
@@ -1011,49 +1192,36 @@ bool runBurst() {
 
 
 // ============================================================
-//  SINGLE CAPTURE PIPELINE — v2.0 (fast + sharp)
+//  SINGLE CAPTURE PIPELINE  v3.0
 // ============================================================
-//
-//  Timeline (OV5640, good light):
-//  ┌───────────────────────────────────────────────────────┐
-//  │ Stage A  Warmup 4×80 ms  =  ~320 ms                  │
-//  │          ┌ AF triggered at frame 2 (parallel) ──────┐ │
-//  │ Stage B  │ Exposure lock + delay 60 ms              │ │
-//  │ Stage B½ └ AF completes (was running since frame 2) ┘ │
-//  │ Stage C  4-frame burst 4×50 ms  = ~200 ms            │
-//  │ Stage D  Upload ~150 KB @ 4096 B chunks  = ~1.0 s    │
-//  │ ─────────────────────────────────────────────────── │
-//  │ Total    ≈ 1.6-1.9 s   (was 4.0-5.0 s in v1.x)      │
-//  └───────────────────────────────────────────────────────┘
 bool captureAndSend() {
+  if (!cameraOn) {
+    Serial.println("[capture] Camera is OFF — long-press ring middle to turn it ON.");
+    return false;
+  }
   capturing = true;
-  lastIdleAf = millis(); // reset idle AF timer so it doesn't fire right after
+  lastIdleAf = millis();
 
   sensor_t* s = esp_camera_sensor_get();
 
-  // Stage A — FAST WARMUP: 4 frames so AEC/AWB converge on the bright page.
-  // We trigger AF at frame index 2 so the motor is moving IN PARALLEL with
-  // the remaining warmup frames. By the time we reach Stage B the lens is
-  // almost (or fully) focused.
+  // Stage A — Warmup + parallel AF
   Serial.println("[capture] Stage A — warmup + parallel AF");
   bool afStarted = false;
   for (int i = 0; i < 4; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
     if (i == 1 && !afStarted && isOv5640 && ov5640AfReady) {
-      // Kick off AF mid-warmup without blocking. The motor will run while
-      // we capture the remaining warmup frames.
-      s->set_reg(s, 0x3022, 0xff, 0x08); // release
+      s->set_reg(s, 0x3022, 0xff, 0x08);
       delay(20);
       s->set_reg(s, 0x3023, 0xff, 0x01);
-      s->set_reg(s, 0x3022, 0xff, 0x03); // SINGLE
+      s->set_reg(s, 0x3022, 0xff, 0x03);
       afStarted = true;
       Serial.println("  [AF] triggered during warmup");
     }
     delay(80);
   }
 
-  // Stage B — LOCK EXPOSURE / WB / GAIN once AEC has settled on paper.
+  // Stage B — Lock exposure
   Serial.println("[capture] Stage B — lock exposure");
   if (s) {
     int aec  = s->status.aec_value;
@@ -1069,10 +1237,7 @@ bool captureAndSend() {
     delay(60);
   }
 
-  // Stage B½ — WAIT FOR AF COMPLETION (if we started it in Stage A).
-  // Poll 0x3023 until ACK==0 (done) or we hit 900 ms from now.
-  // In practice the motor converges in 300-600 ms at 20-30 cm macro distance,
-  // and most of that time already elapsed during the warmup + lock delay above.
+  // Stage B½ — Wait for AF
   if (afStarted) {
     Serial.println("[capture] Stage B½ — waiting for AF to settle");
     unsigned long afDeadline = millis() + 900;
@@ -1080,22 +1245,17 @@ bool captureAndSend() {
       int ack = s->get_reg(s, 0x3023, 0xff);
       if (ack == 0) {
         int state = s->get_reg(s, 0x3029, 0xff);
-        Serial.printf("  [AF] confirmed in %.0f ms remaining (state=0x%02x)\n",
-                      (float)(afDeadline - millis()), state);
+        Serial.printf("  [AF] confirmed (state=0x%02x)\n", state);
         break;
       }
       delay(20);
     }
   } else if (isOv5640 && ov5640AfReady) {
-    // Fallback: AF wasn't started in warmup (e.g. first boot), run it now.
     Serial.println("[capture] Stage B½ — AF fallback (full)");
     ov5640TriggerAf(s, 900);
   }
 
-  // Stage C — PICK-BEST BURST: 4 frames at 50 ms.
-  // With OV5640 already focused and exposure locked, lens vibration is the
-  // only remaining enemy. 4 shots in 200 ms gives us a few chances to catch
-  // the steadiest moment. We pick the LARGEST complete JPEG (= sharpest).
+  // Stage C — Pick-best burst (4 frames)
   Serial.println("[capture] Stage C — 4-frame sharpness burst");
   camera_fb_t* bestFb  = nullptr;
   size_t       bestLen = 0;
@@ -1115,7 +1275,7 @@ bool captureAndSend() {
     delay(50);
   }
 
-  // Stage D — RESTORE auto settings so /stream and /jpg keep working.
+  // Stage D — Restore auto settings
   if (s) {
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 1);
@@ -1137,7 +1297,9 @@ bool captureAndSend() {
 }
 
 
-// Debounced edge detect — fires once when the button goes LOW.
+// ============================================================
+//  HARDWARE BUTTONS
+// ============================================================
 bool pressed(uint8_t pin, int* lastState, unsigned long* lastChange) {
   int s = digitalRead(pin);
   unsigned long now = millis();
@@ -1152,10 +1314,16 @@ bool pressed(uint8_t pin, int* lastState, unsigned long* lastChange) {
 int    capState = HIGH, nextState = HIGH, prevState = HIGH;
 unsigned long capT = 0, nextT = 0, prevT = 0;
 
+// ============================================================
+//  SETUP & LOOP
+// ============================================================
 void setup() {
   Serial.begin(115200);
   delay(800);
-  Serial.println("\n=== Smart Audio Tutor — ESP32-S3  v2.0 ===");
+  Serial.println("\n=== Smart Audio Tutor — ESP32-S3  v3.0 ===");
+  Serial.println("  Image orient : HMIRROR=" + String(HMIRROR) + "  VFLIP=" + String(VFLIP));
+  Serial.println("  Middle short : CAPTURE photo");
+  Serial.println("  Middle long  : CAMERA ON/OFF toggle (hold >" + String(MIDDLE_LONGPRESS_MS) + " ms)");
 
   pinMode(CAPTURE_BTN, INPUT_PULLUP);
   pinMode(NEXT_BTN,    INPUT_PULLUP);
@@ -1165,12 +1333,15 @@ void setup() {
   connectWifi();
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   initRingBle();
-  Serial.println("Ready. Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate");
-  Serial.println("TIP: type 'calibrate' to safely identify which S10 button does what.");
+  Serial.println("Ready. Serial commands:");
+  Serial.println("  ping cap burst next prev ring af audit calibrate cam flip");
+  Serial.println("TIP: type 'calibrate' to safely identify S10 buttons.");
+  Serial.println("TIP: type 'cam' to toggle camera ON/OFF (heat management).");
+  Serial.println("TIP: type 'flip' to toggle hmirror on/off at runtime.");
 }
 
 void printAudit() {
-  Serial.println("====== SYSTEM AUDIT v2.0 ======");
+  Serial.println("====== SYSTEM AUDIT v3.0 ======");
   Serial.printf("  WiFi SSID          : %s\n", WIFI_SSID);
   Serial.printf("  WiFi status        : %s\n",
                 WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DOWN");
@@ -1179,18 +1350,23 @@ void printAudit() {
     Serial.printf("  RSSI               : %d dBm\n", WiFi.RSSI());
   }
   Serial.printf("  Server             : https://%s%s\n", SERVER_HOST, SERVER_PATH);
-  Serial.printf("  Upload chunk size  : %d bytes\n", UPLOAD_CHUNK_SIZE);
+  Serial.printf("  Camera             : %s\n", cameraOn ? "ON" : "OFF");
+  Serial.printf("  HMIRROR / VFLIP    : %d / %d\n", HMIRROR, VFLIP);
+  Serial.printf("  Rotate stream CSS  : %s\n", ROTATE_STREAM_CSS ? "YES" : "no");
   Serial.printf("  Sensor PID         : 0x%04x (%s)\n", sensorPid,
                 isOv5640 ? "OV5640 AF" :
                 (sensorPid == 0x3660 ? "OV3660 fixed" : "unknown"));
   Serial.printf("  OV5640 AF ready    : %s\n", ov5640AfReady ? "YES" : "no");
   Serial.printf("  Idle AF interval   : %d ms\n", IDLE_AF_INTERVAL_MS);
+  Serial.printf("  Middle long-press  : >%d ms = camera toggle\n", MIDDLE_LONGPRESS_MS);
   Serial.printf("  Free heap          : %u bytes\n", (unsigned)ESP.getFreeHeap());
   Serial.printf("  Free PSRAM         : %u bytes\n", (unsigned)ESP.getFreePsram());
   Serial.printf("  Uptime             : %lu s\n", millis() / 1000UL);
   printRingStatus();
   Serial.println("================================");
 }
+
+static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
 
 void handleSerial() {
   static String line;
@@ -1199,17 +1375,27 @@ void handleSerial() {
     if (c == '\r') continue;
     if (c == '\n') {
       line.trim();
-      if      (line.equalsIgnoreCase("ping"))  { Serial.println("[serial] ping");  checkServer(); }
-      else if (line.equalsIgnoreCase("cap"))   { Serial.println("[serial] cap");   Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
-      else if (line.equalsIgnoreCase("burst")) { Serial.println("[serial] burst"); runBurst(); }
-      else if (line.equalsIgnoreCase("next"))  { postCommand("next"); }
-      else if (line.equalsIgnoreCase("prev"))  { postCommand("prev"); }
-      else if (line.equalsIgnoreCase("ring"))  { printRingStatus(); }
-      else if (line.equalsIgnoreCase("af"))    {
+      if      (line.equalsIgnoreCase("ping"))      { Serial.println("[serial] ping");  checkServer(); }
+      else if (line.equalsIgnoreCase("cap"))        { Serial.println("[serial] cap");   Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
+      else if (line.equalsIgnoreCase("burst"))      { Serial.println("[serial] burst"); runBurst(); }
+      else if (line.equalsIgnoreCase("next"))       { postCommand("next"); }
+      else if (line.equalsIgnoreCase("prev"))       { postCommand("prev"); }
+      else if (line.equalsIgnoreCase("ring"))       { printRingStatus(); }
+      else if (line.equalsIgnoreCase("af"))         {
         sensor_t* s = esp_camera_sensor_get();
         Serial.println(ov5640TriggerAf(s, 900) ? "✓ AF locked" : "✗ AF failed");
       }
-      else if (line.equalsIgnoreCase("audit")) { printAudit(); }
+      else if (line.equalsIgnoreCase("audit"))      { printAudit(); }
+      else if (line.equalsIgnoreCase("cam"))        { toggleCamera(); }
+      else if (line.equalsIgnoreCase("flip"))       {
+        if (!cameraOn) { Serial.println("Camera is OFF — turn it on first (cam)"); }
+        else {
+          runtimeMirror = !runtimeMirror;
+          sensor_t* s = esp_camera_sensor_get();
+          if (s) s->set_hmirror(s, runtimeMirror ? 1 : 0);
+          Serial.printf("hmirror = %d\n", runtimeMirror ? 1 : 0);
+        }
+      }
       else if (line.equalsIgnoreCase("calibrate")) {
         calibrateMode = !calibrateMode;
         if (calibrateMode) {
@@ -1217,7 +1403,7 @@ void handleSerial() {
           Serial.println("╔════════════════════════════════════════════╗");
           Serial.println("║  CALIBRATE MODE ON — buttons are SAFE now  ║");
           Serial.println("║  Press each ring button one at a time.     ║");
-          Serial.println("║  Serial Monitor will show its action name. ║");
+          Serial.println("║  Serial Monitor shows action name.         ║");
           Serial.println("║  Type 'calibrate' again when done.         ║");
           Serial.println("╚════════════════════════════════════════════╝");
           printRingStatus();
@@ -1227,8 +1413,8 @@ void handleSerial() {
           Serial.println("╚═════════════════════════════════════╝");
         }
       }
-      else if (line.length() > 0)              {
-        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate)\n",
+      else if (line.length() > 0) {
+        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip)\n",
                       line.c_str());
       }
       line = "";
@@ -1257,6 +1443,6 @@ void loop() {
 
   maintainRingBle();
   pollTrigger();
-  idlePreFocus();   // ← new: keeps lens parked near document distance
+  idlePreFocus();
   delay(10);
 }

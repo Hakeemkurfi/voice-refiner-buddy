@@ -16,37 +16,23 @@ type Parsed = {
   confidence?: number;
 };
 
-// Returned when the Lovable AI Gateway has no credits — the UI still shows
-// the camera preview image rather than blanking out.
-function creditsUnavailableResult(detail?: string): Parsed {
-  return {
-    title: "AI credits unavailable",
-    summary: "The picture arrived but the AI solver cannot run until credits are restored.",
-    steps: [
-      "First, your image reached the app successfully, so the camera upload path is working.",
-      "Next, the AI solver is paused because the Lovable workspace AI credits are exhausted.",
-      "Now, go to Settings → Workspace → Usage in Lovable and top up the AI credits.",
-      detail
-        ? `Finally, the provider returned this message: ${detail.slice(0, 200)}`
-        : "Finally, try the same capture again once credits are available.",
-    ],
-    extractedText: "",
-    confidence: 0,
-  };
-}
+// ─── System prompt ────────────────────────────────────────────────────────────
+// Covers mathematics, physics, chemistry, biology, reading.
+// Special emphasis on university-level notation: λ, ℏ, ∇, ∮, ∬, Greek letters,
+// vector notation, integrals, derivatives, limits, series — all spoken in full
+// English words so the student can write them down by ear.
+const SYSTEM_PROMPT = `You are an elite OCR engine AND a calm, patient tutor for mathematics, physics, chemistry, biology, and academic reading. You receive ONE OR MORE photos taken by a fixed-focus ESP32 camera of the SAME A4 page, notebook, whiteboard, screen, or textbook. When you receive multiple images, they are different frames of the SAME document — MERGE the text across all frames, taking the clearest reading of each character from whichever frame shows it best. Frames may be blurry, tilted, dim, low-contrast, perspective-skewed, or unevenly lit — DO NOT give up.
 
-const SYSTEM_PROMPT = `You are an elite OCR engine AND a calm, patient tutor for math, physics, chemistry, biology, and reading. You receive ONE OR MORE photos taken by a fixed-focus ESP32 OV3660 camera of the SAME A4 page, notebook, whiteboard, screen or textbook. When you receive multiple images, they are different frames of the SAME document captured over a few seconds — your job is to MERGE the text across all frames, taking the clearest reading of each character from whichever frame shows it best. Frames may be slightly blurry, slightly tilted, dim, low-contrast, perspective-skewed, or unevenly lit — DO NOT give up.
-
-The page MAY contain any combination of: printed text, handwritten notes, mathematical expressions (algebra, calculus, matrices, fractions, exponents, integrals, sums, limits, derivatives, series), graphs, function plots, geometry diagrams, tables, multi-column layouts, exam questions with multiple parts (1a, 1b, 2…).
+The page MAY contain any combination of: printed text, handwritten notes, mathematical expressions (algebra, calculus, matrices, fractions, exponents, integrals, sums, limits, derivatives, series, vector calculus), graphs, function plots, geometry diagrams, physics equations, circuit diagrams, tables, multi-column layouts, exam questions with multiple parts (1a, 1b, 2…).
 
 WORK IN FOUR STAGES SILENTLY BEFORE WRITING THE JSON:
 
-Stage 1 — OCR PASS. Read every visible character, line by line, left to right, top to bottom, across all provided frames. When the same line appears in several frames, prefer the sharpest reading. Include numbers, operators (+ − × ÷ = ^ √ ∫ ∑ ∂ lim), Greek letters, units, sub/superscripts, and handwritten marks. Reconstruct partially-occluded characters from context. Only write [?] when a glyph is truly unreadable in EVERY provided frame.
+Stage 1 — OCR PASS. Read every visible character, line by line, left to right, top to bottom, across all provided frames. When the same line appears in several frames, prefer the sharpest reading. Include numbers, operators, Greek letters, units, sub/superscripts, and handwritten marks. Reconstruct partially-occluded characters from context. Only write [?] when a glyph is truly unreadable in EVERY provided frame.
 
-Stage 2 — STRUCTURE PASS. Detect equations vs prose vs multi-part problems. Preserve line breaks in extractedText. For every math expression, also produce a LaTeX version inside extractedText using $...$ delimiters. Describe any graph (axes, curve shape, key points) or table (rows × cols, headers) in plain words.
+Stage 2 — STRUCTURE PASS. Detect equations vs prose vs multi-part problems. Preserve line breaks in extractedText. For every math or physics expression, produce a LaTeX version inside extractedText using $...$ delimiters. Describe any graph (axes, curve shape, key points) or table (rows × cols, headers) in plain words.
 
-Stage 3 — SOLVE / EXPLAIN PASS. Identify the task (transcribe, solve, explain, prove, plot, classify…). If class material is provided, FOLLOW ITS METHOD AND NOTATION exactly. Think through the steps internally and double-check arithmetic, signs, exponents and limits of integration. Re-derive each step before writing it.
-CRITICAL: If the page contains a problem, an exercise, an equation, an integral, a derivative, a limit, a system, a proof, a "find / compute / evaluate / solve / show that" instruction — you MUST SOLVE IT FULLY and walk through the work. NEVER return only the restated question. NEVER stop after reading the problem. The student is blind to the page; they need the full worked solution dictated aloud. If the task is ambiguous (e.g. "discuss"), pick the most likely interpretation and solve it; mention the assumption in step 2.
+Stage 3 — SOLVE / EXPLAIN PASS. Identify the task (transcribe, solve, explain, prove, plot, classify, derive…). If class material is provided, FOLLOW ITS METHOD AND NOTATION exactly. Think through the steps internally and double-check arithmetic, signs, exponents, and limits. Re-derive each step before writing it.
+CRITICAL: If the page contains a problem, exercise, equation, integral, derivative, limit, system, proof, or "find / compute / evaluate / solve / show that" instruction — SOLVE IT FULLY and walk through the work. NEVER return only the restated question. The student is listening through earbuds and cannot see the page; they need the full worked solution dictated aloud.
 
 Stage 4 — ANSWER PASS. State the final answer(s) explicitly. For multi-part questions, answer every part.
 
@@ -57,26 +43,148 @@ Return ONLY JSON in this exact shape:
 
 VERY IMPORTANT — steps MUST be perfectly listenable, because they are read aloud through text-to-speech and the student WRITES THEM DOWN by ear:
 - Each step is ONE clear spoken sentence, 8 to 22 words.
-- Speak math FULLY in English words, the way a tutor dictates on the phone. Never read raw symbols.
-  * "x^2" → "x squared"; "x^3" → "x cubed"; "x^n" → "x to the power n"
-  * "a/b" → "a over b"; "sqrt(x)" → "the square root of x"
-  * "∫_a^b f(x) dx" → "the integral, from a to b, of f of x, d x"
+- Speak ALL math and physics symbols FULLY in English words, as a tutor would dictate on the phone. NEVER read raw symbols or LaTeX.
+
+MATHEMATICS symbols — speak like this:
+  * "x^2" → "x squared";  "x^3" → "x cubed";  "x^n" → "x to the power n"
+  * "a/b" → "a over b"
+  * "√x" → "the square root of x"
+  * "∫_a^b f(x) dx" → "the integral from a to b of f of x, d x"
+  * "∬_R f dA" → "the double integral over region R of f, d A"
+  * "∮_C F·dr" → "the line integral around closed curve C of F dot d r"
   * "d/dx" → "the derivative with respect to x of"
-  * "lim_{x→0}" → "the limit, as x approaches zero, of"
-  * "∑_{i=1}^{n}" → "the sum, from i equals one to n, of"
-  * "sin x" → "sine of x"; "cos x" → "cosine of x"; "ln x" → "natural log of x"
-  * "π" → "pi"; "θ" → "theta"; "∞" → "infinity"; "≈" → "approximately equals"
-  * Always say "equals" for =, "plus" for +, "minus" for −, "times" for ×, "divided by" for ÷.
-  * Use the words "open bracket … close bracket" when precedence matters.
-- Break work into MANY small steps (8 to 16 steps for a real problem) so the listener can keep up and write each line. Each step does ONE micro-operation: state the equation, factor, substitute, simplify, differentiate, evaluate at a bound, etc.
-- Start each step with a short cue word: "First,", "Next,", "Now,", "Then,", "Substituting,", "Simplifying,", "Finally,".
-- The FIRST step restates the problem in spoken form. The LAST step states the final answer for every part, also spoken in words.
+  * "∂/∂x" → "the partial derivative with respect to x of"
+  * "∂²f/∂x²" → "the second partial derivative of f with respect to x"
+  * "lim_{x→0}" → "the limit as x approaches zero of"
+  * "lim_{x→∞}" → "the limit as x approaches infinity of"
+  * "∑_{i=1}^{n}" → "the sum from i equals one to n of"
+  * "∏_{i=1}^{n}" → "the product from i equals one to n of"
+  * "∇f" → "the gradient of f"
+  * "∇·F" → "the divergence of F"
+  * "∇×F" → "the curl of F"
+  * "∇²f" → "the Laplacian of f"
+  * Always say "equals" for =, "plus" for +, "minus" for −, "times" or "multiplied by" for ×, "divided by" for ÷.
+  * Say "open bracket … close bracket" when precedence matters.
+
+GREEK LETTERS — always say the name:
+  * α → "alpha";   β → "beta";    γ → "gamma";   δ → "delta";   ε → "epsilon"
+  * ζ → "zeta";    η → "eta";     θ → "theta";   ι → "iota";    κ → "kappa"
+  * λ → "lambda";  μ → "mu";      ν → "nu";      ξ → "xi";      π → "pi"
+  * ρ → "rho";     σ → "sigma";   τ → "tau";     φ → "phi";     χ → "chi"
+  * ψ → "psi";     ω → "omega";   Δ → "Delta";   Σ → "Sigma";   Π → "Pi"
+  * Γ → "Gamma";   Λ → "Lambda";  Ω → "Omega";   Φ → "Phi";     Ψ → "Psi"
+
+PHYSICS symbols — speak like this:
+  * "λ" when wavelength → "lambda" (e.g. "lambda equals c over f")
+  * "λ" when eigenvalue → "lambda" (e.g. "lambda sub one")
+  * "ℏ" → "h-bar" (reduced Planck constant)
+  * "ħ" → "h-bar"
+  * "ℏω" → "h-bar times omega"
+  * "c" (speed of light) → "the speed of light c"
+  * "ε₀" → "epsilon sub zero" (permittivity of free space)
+  * "μ₀" → "mu sub zero" (permeability of free space)
+  * "k_B" → "Boltzmann constant k sub B"
+  * "N_A" → "Avogadro's number N sub A"
+  * "e" (charge) → "the elementary charge e"
+  * "eV" → "electron volts"
+  * "F = ma" → "F equals m times a"
+  * "E = mc²" → "E equals m c squared"
+  * "E = hf" → "E equals h times f" (Planck)
+  * "p = mv" → "p equals m times v"
+  * "v̂" (unit vector) → "v hat"
+  * "→" over a letter (vector) → say "vector" first: "vector F"
+  * "·" (dot product) → "dot"
+  * "×" (cross product) → "cross"
+  * "≈" → "approximately equals"
+  * "∝" → "is proportional to"
+  * "≠" → "is not equal to"
+  * "∞" → "infinity"
+  * "°" → "degrees"
+  * "Ω" when resistance → "ohms"
+
+- Break work into MANY small steps (8 to 16 steps for a real problem) so the listener can keep up and write each line. Each step does ONE micro-operation: state the equation, substitute, simplify, differentiate, evaluate at a bound, apply a theorem, etc.
+- Start each step with a cue word: "First,", "Next,", "Now,", "Then,", "Substituting,", "Simplifying,", "Applying,", "Evaluating,", "Therefore,", "Finally,".
+- The FIRST step restates the problem in spoken form. The LAST step states the final answer for every part, spoken in words.
 - No markdown, no LaTeX, no raw symbols, no bullets, no emojis inside steps (LaTeX is allowed ONLY inside extractedText).
 
 confidence = how confident you are in the merged OCR + solution (0.0 = nothing readable, 1.0 = perfect).`;
 
 
-async function callGateway(
+// ─── Direct Google Gemini API call ───────────────────────────────────────────
+// Uses the Google Generative Language REST API (no SDK needed).
+// Supports gemini-2.5-flash and gemini-2.5-pro.
+// Falls back to Lovable gateway if GEMINI_API_KEY is not set.
+async function callGemini(
+  modelId: string,
+  data: { images_b64: string[]; contextText?: string },
+  apiKey: string,
+): Promise<Parsed> {
+  // Build inline image parts
+  const imageParts = data.images_b64.map((b64) => ({
+    inlineData: { mimeType: "image/jpeg", data: b64 },
+  }));
+
+  const userText =
+    (data.images_b64.length > 1
+      ? `I am giving you ${data.images_b64.length} frames of the SAME page. Merge the text across all frames.`
+      : "OCR this image FIRST (read every character you can see), then solve or explain.") +
+    (data.contextText?.trim()
+      ? `\n\nClass material to follow:\n${data.contextText.trim()}`
+      : "");
+
+  const body = {
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: userText }, ...imageParts],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      temperature: 0.1,
+      maxOutputTokens: 4096,
+    },
+  };
+
+  // Map short model names to full Gemini API model IDs
+  const geminiModelMap: Record<string, string> = {
+    "google/gemini-2.5-flash": "gemini-2.5-flash",
+    "google/gemini-2.5-pro":   "gemini-2.5-pro",
+    "gemini-2.5-flash":        "gemini-2.5-flash",
+    "gemini-2.5-pro":          "gemini-2.5-pro",
+  };
+  const geminiModel = geminiModelMap[modelId] ?? modelId;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    if (res.status === 429) throw new Error("Rate limited by Gemini API. Try again in a moment.");
+    if (res.status === 403) throw new Error("Invalid GEMINI_API_KEY. Check your .env file.");
+    throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  const json = (await res.json()) as {
+    candidates?: { content?: { parts?: { text?: string }[] } }[];
+    error?: { message?: string };
+  };
+
+  if (json.error) throw new Error(`Gemini error: ${json.error.message}`);
+
+  const content = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  const parsed = safeParseJsonObject(content);
+  return parsed ?? { steps: [content.slice(0, 500)] };
+}
+
+// ─── Lovable gateway fallback (kept for backward compat) ─────────────────────
+async function callLovableGateway(
   modelId: string,
   data: { images_b64: string[]; contextText?: string },
   key: string,
@@ -86,21 +194,21 @@ async function callGateway(
     image_url: { url: `data:image/jpeg;base64,${b64}` },
   }));
 
+  const userText =
+    (data.images_b64.length > 1
+      ? `I am giving you ${data.images_b64.length} frames of the SAME page. Merge the text across all frames.`
+      : "OCR this image FIRST (read every character you can see), then solve or explain.") +
+    (data.contextText?.trim()
+      ? `\n\nClass material to follow:\n${data.contextText.trim()}`
+      : "");
+
   const body = {
     model: modelId,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       {
         role: "user",
-        content: [
-          {
-            type: "text",
-            text:
-              `${data.images_b64.length > 1 ? `I am giving you ${data.images_b64.length} frames of the SAME page. Merge the text across all frames.` : "OCR this image FIRST (read every character you can see), then solve or explain."}` +
-              `${data.contextText?.trim() ? `\n\nClass material to follow:\n${data.contextText.trim()}` : ""}`,
-          },
-          ...imageBlocks,
-        ],
+        content: [{ type: "text", text: userText }, ...imageBlocks],
       },
     ],
     response_format: { type: "json_object" },
@@ -116,11 +224,10 @@ async function callGateway(
     const text = await res.text();
     if (res.status === 429) throw new Error("Rate limited. Try again in a moment.");
     if (res.status === 402) {
-      // Signal credit exhaustion so caller can return a graceful result.
-      throw Object.assign(new Error("Lovable AI credits are temporarily exhausted."), {
-        isCreditError: true,
-        detail: text.slice(0, 300),
-      });
+      throw Object.assign(
+        new Error("Lovable AI credits are temporarily exhausted."),
+        { isCreditError: true, detail: text.slice(0, 300) },
+      );
     }
     throw new Error(`AI error ${res.status}: ${text.slice(0, 300)}`);
   }
@@ -131,25 +238,33 @@ async function callGateway(
   return parsed ?? { steps: [content.slice(0, 500)] };
 }
 
-// Gemini sometimes returns a JSON object followed by extra prose (markdown,
-// "```json" fences, a second object, etc.) which breaks JSON.parse with
-// "Unexpected non-whitespace character after JSON at position N". Walk through
-// braces and return the first balanced object that parses cleanly.
+// ─── Route call to appropriate backend ───────────────────────────────────────
+async function callGateway(
+  modelId: string,
+  data: { images_b64: string[]; contextText?: string },
+  geminiKey: string | undefined,
+  lovableKey: string | undefined,
+): Promise<Parsed> {
+  if (geminiKey) {
+    // Use Gemini API directly — no credits, no middleman
+    return callGemini(modelId, data, geminiKey);
+  }
+  if (lovableKey) {
+    // Fall back to Lovable gateway (legacy)
+    return callLovableGateway(modelId, data, lovableKey);
+  }
+  throw new Error("No API key configured. Set GEMINI_API_KEY in your .env file.");
+}
+
+// ─── JSON parser (handles fences & extra prose) ──────────────────────────────
 function safeParseJsonObject(raw: string): Parsed | null {
   if (!raw) return null;
   let s = raw.trim();
-  // strip ```json ... ``` fences
   s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
-  try {
-    return JSON.parse(s) as Parsed;
-  } catch {
-    /* fall through */
-  }
+  try { return JSON.parse(s) as Parsed; } catch { /* fall through */ }
   const start = s.indexOf("{");
   if (start < 0) return null;
-  let depth = 0;
-  let inStr = false;
-  let esc = false;
+  let depth = 0, inStr = false, esc = false;
   for (let i = start; i < s.length; i++) {
     const c = s[i];
     if (inStr) {
@@ -163,11 +278,7 @@ function safeParseJsonObject(raw: string): Parsed | null {
     else if (c === "}") {
       depth--;
       if (depth === 0) {
-        try {
-          return JSON.parse(s.slice(start, i + 1)) as Parsed;
-        } catch {
-          return null;
-        }
+        try { return JSON.parse(s.slice(start, i + 1)) as Parsed; } catch { return null; }
       }
     }
   }
@@ -185,19 +296,40 @@ function isWeakResult(p: Parsed): boolean {
     joined.includes("cannot read") ||
     joined.includes("too blurry") ||
     joined.includes("could not read")
-  ) {
-    return true;
-  }
+  ) return true;
   return false;
 }
 
+// ─── Credits-unavailable fallback (Lovable gateway specific) ─────────────────
+function creditsUnavailableResult(detail?: string): Parsed {
+  return {
+    title: "AI credits unavailable",
+    summary: "The picture arrived but the AI solver needs credits to run.",
+    steps: [
+      "First, your image reached the app successfully — the camera upload path is working.",
+      "Next, the AI solver is paused because the Lovable workspace AI credits are exhausted.",
+      "Now, the fix is to add a GEMINI_API_KEY to your dot env file — it's free at aistudio dot google dot com slash apikey.",
+      detail
+        ? `Finally, the provider returned this message: ${detail.slice(0, 200)}`
+        : "Finally, try the same capture again once the key is set.",
+    ],
+    extractedText: "",
+    confidence: 0,
+  };
+}
+
+// ─── Main server function ─────────────────────────────────────────────────────
 export const analyzeImage = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => Input.parse(input))
   .handler(async ({ data }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("Missing LOVABLE_API_KEY");
+    const geminiKey  = process.env.GEMINI_API_KEY;
+    const lovableKey = process.env.LOVABLE_API_KEY;
 
-    // ----- Resolve images: either a single inline base64, or a burst id -----
+    if (!geminiKey && !lovableKey) {
+      throw new Error("No API key set. Add GEMINI_API_KEY=your_key to .env");
+    }
+
+    // ----- Resolve images: single inline b64 or burst id -----
     let images_b64: string[] = [];
     if (data.burst_id) {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -217,7 +349,6 @@ export const analyzeImage = createServerFn({ method: "POST" })
           .sort((a, b) => a.seq - b.seq)
           .map((f) => f.image_b64);
       }
-      // Fallback: top 3 by sharpness if no picked_seqs yet
       if (images_b64.length === 0) {
         const { data: frames } = await supabaseAdmin
           .from("burst_frames")
@@ -235,54 +366,50 @@ export const analyzeImage = createServerFn({ method: "POST" })
       throw new Error("No image provided (need image_b64 or burst_id)");
     }
 
-    const mode = data.model ?? "auto";
-    const flashId = "google/gemini-2.5-flash";
-    const proId   = "google/gemini-2.5-pro";
-
+    const mode    = data.model ?? "auto";
+    const flashId = "gemini-2.5-flash";
+    const proId   = "gemini-2.5-pro";
     const payload = { images_b64, contextText: data.contextText };
 
     try {
-      // ---- Explicit model selection ----
+      // ── Explicit model selection ──
       if (mode === "flash") {
-        const p = await callGateway(flashId, payload, key);
+        const p = await callGateway(flashId, payload, geminiKey, lovableKey);
         return finalize(p, flashId, false, images_b64.length);
       }
       if (mode === "pro") {
-        const p = await callGateway(proId, payload, key);
+        const p = await callGateway(proId, payload, geminiKey, lovableKey);
         return finalize(p, proId, false, images_b64.length);
       }
 
-      // ---- AUTO: start with Flash, escalate to Pro only when result is weak ----
+      // ── AUTO: Flash first, escalate to Pro if weak ──
       let used   = flashId;
-      let result = await callGateway(flashId, payload, key);
+      let result = await callGateway(flashId, payload, geminiKey, lovableKey);
       let escalated = false;
 
       if (isWeakResult(result)) {
         try {
-          const proResult = await callGateway(proId, payload, key);
-          const flashLen = (result.extractedText ?? "").trim().length;
-          const proLen   = (proResult.extractedText ?? "").trim().length;
-          // Keep Pro only if it read *at least* as much text as Flash.
+          const proResult = await callGateway(proId, payload, geminiKey, lovableKey);
+          const flashLen  = (result.extractedText ?? "").trim().length;
+          const proLen    = (proResult.extractedText ?? "").trim().length;
           if (proLen >= flashLen) {
             result    = proResult;
             used      = proId;
             escalated = true;
           }
         } catch {
-          // Pro also failed — keep the Flash result and surface it.
+          // Pro also failed — keep Flash result
         }
       }
 
       return finalize(result, used, escalated, images_b64.length);
 
     } catch (error) {
-      // Credit exhaustion: return a spoken "top up your credits" result so the
-      // UI keeps the camera preview visible rather than throwing a blank error.
       if ((error as { isCreditError?: boolean }).isCreditError) {
         const detail = (error as { detail?: string }).detail;
         return finalize(
           creditsUnavailableResult(detail),
-          "AI credits unavailable",
+          "credits-unavailable",
           false,
           images_b64.length,
         );

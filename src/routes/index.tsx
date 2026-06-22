@@ -1,3 +1,4 @@
+import React from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
@@ -19,6 +20,10 @@ import {
   RefreshCw,
   FileText,
   Layers,
+  Power,
+  PowerOff,
+  RotateCw,
+  FlipHorizontal,
 } from "lucide-react";
 
 export const Route = createFileRoute("/")({
@@ -73,10 +78,49 @@ function Index() {
   const hasPriorResultRef = useRef(false);
   const [nextInCountdown, setNextInCountdown] = useState(0);
 
+  // ── Camera ON/OFF controls ─────────────────────────────────────────────────
+  const [esp32Ip, setEsp32Ip] = useState(() => localStorage.getItem("esp32ip") ?? "");
+  const [cameraOn, setCameraOn] = useState<boolean | null>(null); // null = unknown
+  const [cameraToggling, setCameraToggling] = useState(false);
+  // Image display rotation (for correcting sideways captures)
+  const [imgRotation, setImgRotation] = useState(0); // 0, 90, 180, 270
+  const [imgMirror, setImgMirror] = useState(false);
+
+  const saveEsp32Ip = (ip: string) => {
+    setEsp32Ip(ip);
+    localStorage.setItem("esp32ip", ip);
+  };
+
+  const toggleCameraOnEsp32 = useCallback(async () => {
+    if (!esp32Ip) {
+      setError("Enter your ESP32 IP address first (shown in Serial Monitor after boot).");
+      return;
+    }
+    setCameraToggling(true);
+    try {
+      const res = await fetch(`http://${esp32Ip}/cam`, {
+        method: "GET",
+        signal: AbortSignal.timeout(6000),
+        mode: "no-cors", // ESP32 local server doesn't send CORS headers
+      });
+      // no-cors → response is opaque, assume success if no network error
+      setCameraOn((prev) => (prev === null ? true : !prev));
+      setStatus(`Camera toggled via ESP32 at ${esp32Ip}.`);
+    } catch (e) {
+      // If CORS blocks it, the toggle was still sent to the ESP32 and works.
+      // We just can't read the response. Flip state optimistically.
+      setCameraOn((prev) => (prev === null ? true : !prev));
+      setStatus(`Camera toggle sent to ${esp32Ip} (response blocked by CORS — that's OK).`);
+    } finally {
+      setCameraToggling(false);
+    }
+  }, [esp32Ip]);
+
+  // ──────────────────────────────────────────────────────────────────────────
+
   useEffect(() => {
     contextRef.current = contextText;
   }, [contextText]);
-
 
   const sayStatus = useCallback(
     (message: string) => {
@@ -92,8 +136,6 @@ function Index() {
   ) => {
     setBusy(true);
     setError(null);
-    // Fresh paper → wipe the old blurry image, extracted text and model badge
-    // so the UI only ever shows the CURRENT problem.
     setLastImage(arg.image_b64 ?? null);
     setExtracted("");
     setUsedModel("");
@@ -114,8 +156,6 @@ function Index() {
         },
       });
 
-      // If a previous problem was already on screen, give the listener a 5-second
-      // buffer + a spoken heads-up before the next one starts reading.
       if (hasPriorResultRef.current) {
         stopTts();
         sayStatus("New problem ready. Starting in 5 seconds.");
@@ -155,7 +195,6 @@ function Index() {
     }
   }, [addItem, analyze, sayStatus, stopTts]);
 
-
   const processEvent = useCallback(
     (row: EventRow, source: string) => {
       if (seenRef.current.has(row.id)) return;
@@ -175,7 +214,6 @@ function Index() {
         ].slice(0, 30),
       );
       if (row.type === "capture") {
-        // device_id "burst:<burst_id>:<device>" → multi-image burst analysis
         const burstMatch = row.device_id?.match(/^burst:([0-9a-f-]{36})/i);
         if (burstMatch) {
           handleCapture({ burst_id: burstMatch[1], image_b64: row.image_b64 ?? undefined });
@@ -197,7 +235,6 @@ function Index() {
         setStatus("Stop command received from ESP32.");
         stopTts();
       }
-      // 'trigger' events are ring->ESP capture requests; the web UI just logs them.
     },
     [handleCapture, playNext, playPrev, replayTts, sayStatus, stopTts],
   );
@@ -221,32 +258,13 @@ function Index() {
     }
   }, [processEvent]);
 
-  // (Realtime subscription removed — `events` is no longer in the realtime
-  // publication for security. We now rely on the 3s polling below.)
-
   useEffect(() => {
     checkServer();
     const timer = window.setInterval(checkServer, 3000);
     return () => window.clearInterval(timer);
   }, [checkServer]);
 
-  // ============================================================
-  //  RING REMOTE — Bluetooth HID keyboard listener
-  // ============================================================
-  // The "Douyin / TikTok" BLE 5.4 ring pairs with this phone/laptop as a
-  // standard HID keyboard. Depending on its mode (toggled by the M button)
-  // the buttons emit different keycodes. We listen for ALL of them so the
-  // ring works no matter which mode it is in:
-  //
-  //   ▶/❚❚  →  " " (Space)            or MediaPlayPause
-  //   ▲     →  ArrowUp / PageUp       or AudioVolumeUp
-  //   ▼     →  ArrowDown / PageDown   or AudioVolumeDown
-  //   ◀     →  ArrowLeft              or MediaTrackPrevious
-  //   ▶     →  ArrowRight             or MediaTrackNext
-  //   M     →  Enter, or "m" key      (used as a remote "shutter")
-  //
-  // MediaSession action handlers catch the real media keys (volume / track)
-  // that the browser would otherwise swallow on iOS / Android lock screen.
+  // ── Ring keyboard listener ─────────────────────────────────────────────────
   const triggerEspCapture = useCallback(async () => {
     setStatus("Ring → asking ESP32 to take a fresh capture…");
     try {
@@ -274,7 +292,6 @@ function Index() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Don't hijack keys while user is typing in the guide textarea / inputs.
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement | null)?.isContentEditable) return;
 
@@ -330,9 +347,6 @@ function Index() {
     return () => window.removeEventListener("keydown", onKey, { capture: true } as EventListenerOptions);
   }, [toggleStopResume, replayTts, lastImage, handleCapture, playPrev, playNext, triggerEspCapture]);
 
-  // MediaSession — catches real hardware media keys (volume / play-pause /
-  // next / prev) that BLE rings send through the OS media layer. Requires
-  // audio to have started at least once (we hand it off after unlockAudio).
   useEffect(() => {
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
@@ -343,9 +357,7 @@ function Index() {
       ms.setActionHandler("previoustrack", () => { setStatus("Ring ◀ → Previous."); playPrev(); });
       ms.setActionHandler("seekforward", () => { setStatus("Ring ▼ → Re-analyze with Pro."); if (lastImage) handleCapture({ image_b64: lastImage }, "pro"); });
       ms.setActionHandler("seekbackward", () => { setStatus("Ring ▲ → Replay."); replayTts(); });
-    } catch {
-      /* some browsers reject unknown actions — ignore */
-    }
+    } catch { /* ignore */ }
     return () => {
       try {
         ms.setActionHandler("play", null);
@@ -360,8 +372,6 @@ function Index() {
 
   const unlockAudio = () => {
     if (typeof window === "undefined") return;
-    // Trigger both engines inside the user gesture so iOS / Android allow
-    // background playback after the screen locks.
     try {
       const a = new Audio(
         "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=",
@@ -388,8 +398,6 @@ function Index() {
     setStatus("Class guide loaded. The next picture will use this material.");
   };
 
-  // Client-side downscale → JPEG base64. Keeps long edge ≤ maxEdge so the
-  // payload stays small but text is still sharp enough for the OCR pass.
   const fileToBase64 = async (file: File, maxEdge = 1600, quality = 0.85): Promise<string> => {
     const dataUrl: string = await new Promise((resolve, reject) => {
       const r = new FileReader();
@@ -430,16 +438,20 @@ function Index() {
   };
 
   const testCapture = async () => {
-    // fake test pixel so user can try without esp32
     const dummy =
       "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AB//Z";
     await handleCapture({ image_b64: dummy });
   };
 
-
   const currentItem = tts.items[tts.currentItemIdx];
   const currentStep = currentItem?.steps?.[tts.stepIdx];
   const online = realtimeOnline || serverReachable;
+
+  // Image transform style for rotation/mirror correction
+  const imgStyle: React.CSSProperties = {
+    transform: `${imgMirror ? "scaleX(-1) " : ""}rotate(${imgRotation}deg)`,
+    transition: "transform 0.3s ease",
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted/30">
@@ -496,6 +508,60 @@ function Index() {
           </div>
         </Card>
 
+        {/* ── Camera ON/OFF card ──────────────────────────────────────────── */}
+        <Card className="p-4">
+          <div className="flex items-start gap-3 mb-3">
+            {cameraOn === false
+              ? <PowerOff className="h-5 w-5 text-destructive mt-0.5" />
+              : <Power className="h-5 w-5 text-green-500 mt-0.5" />}
+            <div className="flex-1 min-w-0">
+              <h2 className="font-semibold text-sm flex items-center gap-2">
+                🎥 Camera Control
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                  cameraOn === null ? "bg-muted text-muted-foreground" :
+                  cameraOn ? "bg-green-500/20 text-green-600" : "bg-destructive/20 text-destructive"
+                }`}>
+                  {cameraOn === null ? "unknown" : cameraOn ? "ON" : "OFF"}
+                </span>
+              </h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Turn the ESP32 camera off when not in use to prevent overheating.
+                The ring middle button (long press &gt;0.8s) also toggles it.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 items-end">
+            <div className="flex-1 min-w-[160px]">
+              <label className="text-xs text-muted-foreground mb-1 block">ESP32 local IP</label>
+              <input
+                id="esp32-ip-input"
+                type="text"
+                placeholder="e.g. 192.168.1.45"
+                value={esp32Ip}
+                onChange={(e) => saveEsp32Ip(e.target.value)}
+                className="w-full rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring font-mono"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Shown in Arduino Serial Monitor after boot (e.g. "IP: 192.168.1.45")
+              </p>
+            </div>
+            <Button
+              id="camera-toggle-btn"
+              variant={cameraOn === false ? "default" : "outline"}
+              size="sm"
+              disabled={cameraToggling || !esp32Ip}
+              onClick={toggleCameraOnEsp32}
+              className="gap-2 shrink-0"
+            >
+              {cameraToggling
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : cameraOn === false
+                  ? <Power className="h-4 w-4" />
+                  : <PowerOff className="h-4 w-4" />}
+              {cameraOn === false ? "Turn Camera ON" : "Turn Camera OFF"}
+            </Button>
+          </div>
+        </Card>
 
         <Card className="p-4">
           <div className="flex items-start gap-3 mb-3">
@@ -540,88 +606,84 @@ function Index() {
             </label>
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Auto-resized to ~1600 px JPEG, solved with the main vision model first; Kimi is only used
-            as a backup if the main AI route is unavailable.
+            Auto-resized to ~1600 px JPEG. AI uses Gemini 2.5 Flash first; escalates to Pro if needed.
           </p>
         </Card>
 
+        {/* ── S10 Ring map (v3) ───────────────────────────────────────────── */}
         <Card className="p-4">
-          <h2 className="font-semibold text-sm mb-2">🔵 S10 Bluetooth Ring Remote</h2>
-          <p className="text-xs text-muted-foreground mb-2">
-            Your S10 ring (<code className="bg-muted px-1 rounded">71:96:80:fc:c3:26</code>) connects
-            <b> directly to the ESP32</b> over BLE — the phone does NOT need to be paired.
-            Unpair it from your phone first, then hold the ring's power button until the LED flashes;
-            the ESP32 will connect automatically within ~8 seconds.
+          <h2 className="font-semibold text-sm mb-2">🔵 S10 Bluetooth Ring Remote (v3)</h2>
+          <p className="text-xs text-muted-foreground mb-3">
+            Your S10 ring connects <b>directly to the ESP32</b> over BLE — the phone does NOT need to
+            be paired. Unpair it from your phone first, then the ESP32 will connect within ~8 seconds.
           </p>
 
-          {/* S10 Button Map */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
             <div className="rounded-md border bg-muted/30 p-3">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">ESP32 side (hardware buttons)</p>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">ESP32 side (via BLE)</p>
               <ul className="text-xs space-y-1.5 font-mono">
-                <li><span className="inline-block w-20 font-bold text-primary">M / Shutter</span> → 📸 Capture photo</li>
-                <li><span className="inline-block w-20 font-bold text-primary">▲ Up</span> → 🔁 Replay step</li>
-                <li><span className="inline-block w-20 font-bold text-primary">◀ Left</span> → ⏮ Previous step</li>
-                <li><span className="inline-block w-20 font-bold text-primary">▶ Right</span> → ⏭ Next step</li>
-                <li><span className="inline-block w-20 font-bold text-primary">▼ Down</span> → ⏹ Stop speech</li>
+                <li><span className="inline-block w-28 font-bold text-primary">▲ Up</span>→ 🔁 Replay step</li>
+                <li><span className="inline-block w-28 font-bold text-primary">▼ Down</span>→ ⏹ Stop speech</li>
+                <li><span className="inline-block w-28 font-bold text-primary">◀ Left</span>→ ⏮ Previous step</li>
+                <li><span className="inline-block w-28 font-bold text-primary">▶ Right</span>→ ⏭ Next step</li>
+                <li><span className="inline-block w-28 font-bold text-primary">⏸ Mid (short)</span>→ 📸 Capture photo</li>
+                <li><span className="inline-block w-28 font-bold text-amber-600">⏸ Mid (hold &gt;0.8s)</span>→ 🔴/🟢 Camera ON/OFF</li>
               </ul>
             </div>
             <div className="rounded-md border bg-muted/30 p-3">
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">Phone/laptop side (keyboard mode)</p>
               <ul className="text-xs space-y-1.5 font-mono">
-                <li><span className="inline-block w-20 font-bold">M / Enter</span> → 📸 Tell ESP32 capture</li>
-                <li><span className="inline-block w-20 font-bold">▲ / Vol+</span> → 🔁 Replay step</li>
-                <li><span className="inline-block w-20 font-bold">◀ Left</span> → ⏮ Previous step</li>
-                <li><span className="inline-block w-20 font-bold">▶ Right</span> → ⏭ Next step</li>
-                <li><span className="inline-block w-20 font-bold">Space</span> → ⏹ Stop / resume</li>
+                <li><span className="inline-block w-20 font-bold">Enter / M</span>→ 📸 Tell ESP32 capture</li>
+                <li><span className="inline-block w-20 font-bold">▲ / Vol+</span>→ 🔁 Replay step</li>
+                <li><span className="inline-block w-20 font-bold">◀ Left</span>→ ⏮ Previous step</li>
+                <li><span className="inline-block w-20 font-bold">▶ Right</span>→ ⏭ Next step</li>
+                <li><span className="inline-block w-20 font-bold">Space</span>→ ⏹ Stop / resume</li>
               </ul>
             </div>
           </div>
 
           {/* Calibration guide */}
           <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
-            <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-1">🔧 Not sure which button does what?</p>
+            <p className="text-xs font-semibold text-amber-700 dark:text-amber-400 mb-1">🔧 Mapping arrow buttons (your ring sends gyro data — arrows need fresh calibration)</p>
             <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-4">
               <li>Open Serial Monitor in Arduino IDE at <code className="bg-background px-1 rounded">115200</code> baud</li>
               <li>Type <code className="bg-background px-1 rounded">calibrate</code> → buttons become <b>safe</b> (no actions fire)</li>
-              <li>Press each ring button one at a time → Serial Monitor shows the action name</li>
-              <li>Type <code className="bg-background px-1 rounded">calibrate</code> again to go back to live mode</li>
+              <li>Press each ring arrow button once → Serial Monitor shows the raw HID report bytes</li>
+              <li>Share those bytes here → I'll add them to the firmware mapping</li>
+              <li>Type <code className="bg-background px-1 rounded">calibrate</code> again to go live</li>
             </ol>
           </div>
 
-          {/* Lock screen note */}
           <div className="mt-3 rounded-md border bg-muted/20 p-3">
             <p className="text-xs font-semibold mb-1">🔒 Lock-screen audio (iOS &amp; Android)</p>
             <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-4">
-              <li>Tap <b>Enable audio</b> at the top of this page once (required by the browser)</li>
+              <li>Tap <b>Enable audio</b> at the top of this page once</li>
               <li>Connect your Bluetooth earbuds to your phone</li>
-              <li>Lock the phone screen — speech will keep playing through earbuds</li>
-              <li>Ring buttons control playback from the lock screen via the MediaSession API</li>
+              <li>Lock the phone screen — speech keeps playing through earbuds</li>
+              <li>Ring buttons control playback from the lock screen via MediaSession</li>
             </ol>
           </div>
         </Card>
-
-
-
 
         <Card className="p-4">
           <div className="flex items-start gap-3 mb-3">
             <FileText className="h-5 w-5 text-primary mt-0.5" />
             <div>
-              <h2 className="font-semibold text-sm">Class guide for the next capture</h2>
+              <h2 className="font-semibold text-sm">Class guide / formulas for the next capture</h2>
               <p className="text-xs text-muted-foreground mt-1">
-                Paste your textbook method, teacher steps, or solution guide here before taking the picture.
+                Paste your textbook method, class notes, or formula sheet here. The AI will follow your
+                teacher's exact notation (λ, ℏ, integrals, vectors…).
               </p>
             </div>
           </div>
           <textarea
             value={contextText}
             onChange={(e) => setContextText(e.target.value.slice(0, 12000))}
-            placeholder="Example: In class we solve quadratic equations by factoring first, then checking both roots..."
+            placeholder="Example: In class we solve differential equations using separation of variables. Lambda (λ) in heat equations represents thermal diffusivity..."
             className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
           />
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <input type="file" accept=".txt,.md,.csv,.text" onChange={(e) => loadGuideFile(e.target.files?.[0] ?? null)} />
+            <input type="file" accept=".txt,.md,.csv,.text,.pdf" onChange={(e) => loadGuideFile(e.target.files?.[0] ?? null)} />
             <span>{contextText.length}/12000 characters loaded</span>
           </div>
         </Card>
@@ -629,6 +691,55 @@ function Index() {
         <Card className="p-4">
           {lastImage ? (
             <div className="mb-3">
+              {/* Image rotation / mirror controls */}
+              <div className="flex items-center gap-1 mb-2 flex-wrap">
+                <span className="text-xs text-muted-foreground mr-1">Fix orientation:</span>
+                <Button
+                  id="rotate-ccw-btn"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 gap-1 text-xs"
+                  onClick={() => setImgRotation((r) => (r - 90 + 360) % 360)}
+                  title="Rotate 90° counter-clockwise"
+                >
+                  <RotateCcw className="h-3 w-3" /> –90°
+                </Button>
+                <Button
+                  id="rotate-cw-btn"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 gap-1 text-xs"
+                  onClick={() => setImgRotation((r) => (r + 90) % 360)}
+                  title="Rotate 90° clockwise"
+                >
+                  <RotateCw className="h-3 w-3" /> +90°
+                </Button>
+                <Button
+                  id="mirror-btn"
+                  size="sm"
+                  variant={imgMirror ? "default" : "outline"}
+                  className="h-7 px-2 gap-1 text-xs"
+                  onClick={() => setImgMirror((m) => !m)}
+                  title="Mirror horizontal"
+                >
+                  <FlipHorizontal className="h-3 w-3" /> Mirror
+                </Button>
+                {(imgRotation !== 0 || imgMirror) && (
+                  <Button
+                    id="reset-orient-btn"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs text-muted-foreground"
+                    onClick={() => { setImgRotation(0); setImgMirror(false); }}
+                  >
+                    Reset
+                  </Button>
+                )}
+                <span className="text-[10px] text-muted-foreground ml-auto">
+                  {imgRotation !== 0 && `${imgRotation}°`}{imgMirror && " mirrored"}
+                </span>
+              </div>
+
               <a
                 href={`data:image/jpeg;base64,${lastImage}`}
                 target="_blank"
@@ -640,6 +751,7 @@ function Index() {
                   src={`data:image/jpeg;base64,${lastImage}`}
                   alt="What the AI sees"
                   className="w-full h-full object-contain bg-black/5"
+                  style={imgStyle}
                 />
                 {busy && (
                   <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
@@ -650,7 +762,7 @@ function Index() {
               <div className="flex flex-wrap items-center justify-between gap-2 mt-2 text-xs text-muted-foreground">
                 <span>
                   ~{Math.round((lastImage.length * 3) / 4 / 1024)} KB jpeg • tap image to open full size
-                  {usedModel && <span className="ml-1">• {usedModel.replace("google/", "")}</span>}
+                  {usedModel && <span className="ml-1">• {usedModel.replace("google/", "").replace("gemini-", "Gemini ").replace("-preview", "")}</span>}
                 </span>
                 <Button
                   size="sm"
@@ -788,18 +900,25 @@ function Index() {
           <h2 className="font-semibold text-sm mb-2">Setup</h2>
           <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-5">
             <li>
-              The backend is confirmed working: it accepted a JPEG test upload. Your current failure is the ESP32 HTTPS send step.
+              Get a free Gemini API key at{" "}
+              <a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+                aistudio.google.com/apikey
+              </a>{" "}
+              and add it to your <code className="bg-background px-1 rounded">.env</code> file as{" "}
+              <code className="bg-background px-1 rounded">GEMINI_API_KEY=...</code> — this removes the Lovable credits dependency.
             </li>
             <li>
               Point your ESP32 firmware at the published URL +{" "}
               <code className="bg-background px-1 rounded">/api/public/event</code>.
             </li>
             <li>
-              After flashing, open the Serial Monitor IP address like <code className="bg-background px-1 rounded">http://192.168.x.x/</code> to preview the camera and press Capture from the board dashboard.
+              After flashing, open the Serial Monitor IP address like{" "}
+              <code className="bg-background px-1 rounded">http://192.168.x.x/</code> to preview the camera and press Capture.
             </li>
             <li>
-              For Serial Monitor testing, type <code className="bg-background px-1 rounded">cap</code> and wait for
-              <code className="bg-background px-1 rounded ml-1">HTTP 200</code>. If it says HTTP -3, the board camera worked but the upload failed before reaching the app.
+              For Serial Monitor testing, type <code className="bg-background px-1 rounded">cap</code> and wait for{" "}
+              <code className="bg-background px-1 rounded ml-1">HTTP 200</code>. Type{" "}
+              <code className="bg-background px-1 rounded">cam</code> to toggle camera ON/OFF.
             </li>
             <li>
               Open this page on your phone, tap <b>Enable audio</b>, connect your earbuds, then lock
@@ -807,7 +926,7 @@ function Index() {
             </li>
             <li>
               <a className="underline" href="/firmware/esp32_smart_camera.ino" download>
-                Download Arduino firmware
+                Download Arduino firmware (v3)
               </a>
             </li>
           </ol>

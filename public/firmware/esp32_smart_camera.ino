@@ -272,7 +272,9 @@ void handleLocalRoot() {
   page += "<title>ESP32 Smart Audio Tutor</title><body style='font-family:Arial,sans-serif;margin:20px;line-height:1.4'>";
   page += "<h2>ESP32 Smart Audio Tutor</h2>";
   page += "<p>If this preview image appears, the camera is working locally.</p>";
-  page += "<img src='/jpg?ts=" + String(millis()) + "' style='width:100%;max-width:640px;border:1px solid #ccc'>";
+  page += "<p>A4 framing: hold the camera about 25-35 cm above the paper; fill most of the preview with the page.</p>";
+  page += "<img id='live' src='/jpg?ts=" + String(millis()) + "' style='width:100%;max-width:720px;border:1px solid #ccc'>";
+  page += "<script>setInterval(()=>{live.src='/jpg?ts='+Date.now()},900)</script>";
   page += "<p><a href='/capture'><button style='font-size:18px;padding:12px 18px'>Capture and send to app</button></a></p>";
   page += "<p><a href='/ping'><button style='font-size:16px;padding:10px 14px'>Test app server</button></a> ";
   page += "<a href='/next'><button style='font-size:16px;padding:10px 14px'>Next</button></a> ";
@@ -294,6 +296,8 @@ static inline bool isCompleteJpeg(const uint8_t* buf, size_t len) {
 }
 
 void handleLocalJpg() {
+  sensor_t* s = esp_camera_sensor_get();
+  ov5640TriggerAf(s, 700);
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }
   WiFiClient localClient = localServer.client();

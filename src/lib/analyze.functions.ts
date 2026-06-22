@@ -17,10 +17,6 @@ type Parsed = {
 };
 
 // ─── System prompt ────────────────────────────────────────────────────────────
-// Covers mathematics, physics, chemistry, biology, reading.
-// Special emphasis on university-level notation: λ, ℏ, ∇, ∮, ∬, Greek letters,
-// vector notation, integrals, derivatives, limits, series — all spoken in full
-// English words so the student can write them down by ear.
 const SYSTEM_PROMPT = `You are an elite OCR engine AND a calm, patient tutor for mathematics, physics, chemistry, biology, and academic reading. You receive ONE OR MORE photos taken by a fixed-focus ESP32 camera of the SAME A4 page, notebook, whiteboard, screen, or textbook. When you receive multiple images, they are different frames of the SAME document — MERGE the text across all frames, taking the clearest reading of each character from whichever frame shows it best. Frames may be blurry, tilted, dim, low-contrast, perspective-skewed, or unevenly lit — DO NOT give up.
 
 The page MAY contain any combination of: printed text, handwritten notes, mathematical expressions (algebra, calculus, matrices, fractions, exponents, integrals, sums, limits, derivatives, series, vector calculus), graphs, function plots, geometry diagrams, physics equations, circuit diagrams, tables, multi-column layouts, exam questions with multiple parts (1a, 1b, 2…).
@@ -109,17 +105,12 @@ PHYSICS symbols — speak like this:
 
 confidence = how confident you are in the merged OCR + solution (0.0 = nothing readable, 1.0 = perfect).`;
 
-
-// ─── Direct Google Gemini API call ───────────────────────────────────────────
-// Uses the Google Generative Language REST API (no SDK needed).
-// Supports gemini-2.5-flash and gemini-2.5-pro.
-// Falls back to Lovable gateway if GEMINI_API_KEY is not set.
+// ─── Direct Google Gemini REST API ────────────────────────────────────────────
 async function callGemini(
   modelId: string,
   data: { images_b64: string[]; contextText?: string },
   apiKey: string,
 ): Promise<Parsed> {
-  // Build inline image parts
   const imageParts = data.images_b64.map((b64) => ({
     inlineData: { mimeType: "image/jpeg", data: b64 },
   }));
@@ -147,15 +138,7 @@ async function callGemini(
     },
   };
 
-  // Map short model names to full Gemini API model IDs
-  const geminiModelMap: Record<string, string> = {
-    "google/gemini-2.5-flash": "gemini-2.5-flash",
-    "google/gemini-2.5-pro":   "gemini-2.5-pro",
-    "gemini-2.5-flash":        "gemini-2.5-flash",
-    "gemini-2.5-pro":          "gemini-2.5-pro",
-  };
-  const geminiModel = geminiModelMap[modelId] ?? modelId;
-
+  const geminiModel = modelId.replace("google/", "");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
 
   const res = await fetch(url, {
@@ -166,8 +149,8 @@ async function callGemini(
 
   if (!res.ok) {
     const text = await res.text();
-    if (res.status === 429) throw new Error("Rate limited by Gemini API. Try again in a moment.");
-    if (res.status === 403) throw new Error("Invalid GEMINI_API_KEY. Check your .env file.");
+    if (res.status === 429) throw new Error("Gemini API rate limited. Wait a moment and retry.");
+    if (res.status === 403 || res.status === 400) throw new Error("Invalid GEMINI_API_KEY. Check your key at aistudio.google.com/app/apikey");
     throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
   }
 
@@ -181,79 +164,6 @@ async function callGemini(
   const content = json.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   const parsed = safeParseJsonObject(content);
   return parsed ?? { steps: [content.slice(0, 500)] };
-}
-
-// ─── Lovable gateway fallback (kept for backward compat) ─────────────────────
-async function callLovableGateway(
-  modelId: string,
-  data: { images_b64: string[]; contextText?: string },
-  key: string,
-): Promise<Parsed> {
-  const imageBlocks = data.images_b64.map((b64) => ({
-    type: "image_url" as const,
-    image_url: { url: `data:image/jpeg;base64,${b64}` },
-  }));
-
-  const userText =
-    (data.images_b64.length > 1
-      ? `I am giving you ${data.images_b64.length} frames of the SAME page. Merge the text across all frames.`
-      : "OCR this image FIRST (read every character you can see), then solve or explain.") +
-    (data.contextText?.trim()
-      ? `\n\nClass material to follow:\n${data.contextText.trim()}`
-      : "");
-
-  const body = {
-    model: modelId,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: [{ type: "text", text: userText }, ...imageBlocks],
-      },
-    ],
-    response_format: { type: "json_object" },
-  };
-
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Lovable-API-Key": key },
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    if (res.status === 429) throw new Error("Rate limited. Try again in a moment.");
-    if (res.status === 402) {
-      throw Object.assign(
-        new Error("Lovable AI credits are temporarily exhausted."),
-        { isCreditError: true, detail: text.slice(0, 300) },
-      );
-    }
-    throw new Error(`AI error ${res.status}: ${text.slice(0, 300)}`);
-  }
-
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = json.choices?.[0]?.message?.content ?? "{}";
-  const parsed = safeParseJsonObject(content);
-  return parsed ?? { steps: [content.slice(0, 500)] };
-}
-
-// ─── Route call to appropriate backend ───────────────────────────────────────
-async function callGateway(
-  modelId: string,
-  data: { images_b64: string[]; contextText?: string },
-  geminiKey: string | undefined,
-  lovableKey: string | undefined,
-): Promise<Parsed> {
-  if (geminiKey) {
-    // Use Gemini API directly — no credits, no middleman
-    return callGemini(modelId, data, geminiKey);
-  }
-  if (lovableKey) {
-    // Fall back to Lovable gateway (legacy)
-    return callLovableGateway(modelId, data, lovableKey);
-  }
-  throw new Error("No API key configured. Set GEMINI_API_KEY in your .env file.");
 }
 
 // ─── JSON parser (handles fences & extra prose) ──────────────────────────────
@@ -300,33 +210,13 @@ function isWeakResult(p: Parsed): boolean {
   return false;
 }
 
-// ─── Credits-unavailable fallback (Lovable gateway specific) ─────────────────
-function creditsUnavailableResult(detail?: string): Parsed {
-  return {
-    title: "AI credits unavailable",
-    summary: "The picture arrived but the AI solver needs credits to run.",
-    steps: [
-      "First, your image reached the app successfully — the camera upload path is working.",
-      "Next, the AI solver is paused because the Lovable workspace AI credits are exhausted.",
-      "Now, the fix is to add a GEMINI_API_KEY to your dot env file — it's free at aistudio dot google dot com slash apikey.",
-      detail
-        ? `Finally, the provider returned this message: ${detail.slice(0, 200)}`
-        : "Finally, try the same capture again once the key is set.",
-    ],
-    extractedText: "",
-    confidence: 0,
-  };
-}
-
 // ─── Main server function ─────────────────────────────────────────────────────
 export const analyzeImage = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => Input.parse(input))
   .handler(async ({ data }) => {
-    const geminiKey  = process.env.GEMINI_API_KEY;
-    const lovableKey = process.env.LOVABLE_API_KEY;
-
-    if (!geminiKey && !lovableKey) {
-      throw new Error("No API key set. Add GEMINI_API_KEY=your_key to .env");
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not set. Get a free key at https://aistudio.google.com/app/apikey and add it to your secrets.");
     }
 
     // ----- Resolve images: single inline b64 or burst id -----
@@ -372,24 +262,23 @@ export const analyzeImage = createServerFn({ method: "POST" })
     const payload = { images_b64, contextText: data.contextText };
 
     try {
-      // ── Explicit model selection ──
       if (mode === "flash") {
-        const p = await callGateway(flashId, payload, geminiKey, lovableKey);
+        const p = await callGemini(flashId, payload, apiKey);
         return finalize(p, flashId, false, images_b64.length);
       }
       if (mode === "pro") {
-        const p = await callGateway(proId, payload, geminiKey, lovableKey);
+        const p = await callGemini(proId, payload, apiKey);
         return finalize(p, proId, false, images_b64.length);
       }
 
       // ── AUTO: Flash first, escalate to Pro if weak ──
       let used   = flashId;
-      let result = await callGateway(flashId, payload, geminiKey, lovableKey);
+      let result = await callGemini(flashId, payload, apiKey);
       let escalated = false;
 
       if (isWeakResult(result)) {
         try {
-          const proResult = await callGateway(proId, payload, geminiKey, lovableKey);
+          const proResult = await callGemini(proId, payload, apiKey);
           const flashLen  = (result.extractedText ?? "").trim().length;
           const proLen    = (proResult.extractedText ?? "").trim().length;
           if (proLen >= flashLen) {
@@ -405,19 +294,10 @@ export const analyzeImage = createServerFn({ method: "POST" })
       return finalize(result, used, escalated, images_b64.length);
 
     } catch (error) {
-      if ((error as { isCreditError?: boolean }).isCreditError) {
-        const detail = (error as { detail?: string }).detail;
-        return finalize(
-          creditsUnavailableResult(detail),
-          "credits-unavailable",
-          false,
-          images_b64.length,
-        );
-      }
-      throw error;
+      const msg = error instanceof Error ? error.message : String(error);
+      throw new Error(msg);
     }
   });
-
 
 function finalize(
   parsed: Parsed,

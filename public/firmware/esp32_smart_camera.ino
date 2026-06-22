@@ -494,6 +494,26 @@ static bool ringConnected = false;
 static bool ringScanRunning = false;
 static unsigned long lastBleScan = 0;
 static unsigned long lastRingAction = 0;
+static unsigned long lastRingConnectAttempt = 0;
+
+class RingClientCallbacks : public BLEClientCallbacks {
+  void onConnect(BLEClient*) override {
+    Serial.println("[ring] BLE link opened");
+  }
+  void onDisconnect(BLEClient*) override {
+    ringConnected = false;
+    Serial.println("[ring] disconnected — wake S10 and it will reconnect");
+  }
+};
+
+void configureRingSecurity() {
+  BLESecurity* security = new BLESecurity();
+  security->setAuthenticationMode(ESP_LE_AUTH_BOND);
+  security->setCapability(ESP_IO_CAP_NONE);       // S10 pairing: Just Works, no phone popup needed
+  security->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  security->setRespEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  BLEDevice::setEncryptionLevel(ESP_BLE_SEC_ENCRYPT);
+}
 
 void ringAction(const char* action) {
   if (millis() - lastRingAction < 450) return;  // ignore key-release / bounce reports
@@ -502,7 +522,8 @@ void ringAction(const char* action) {
   // staring at hex bytes.
   Serial.printf("\n>>> [RING BUTTON] %s  (BLE connected=%s) <<<\n",
                 action, ringConnected ? "YES" : "NO");
-  if (!strcmp(action, "capture")) runBurst();
+  if (!strcmp(action, "capture")) captureAndSend();
+  else if (!strcmp(action, "burst")) runBurst();
   else if (!strcmp(action, "single")) captureAndSend();
   else if (!strcmp(action, "next")) postCommand("next");
   else if (!strcmp(action, "prev")) postCommand("prev");

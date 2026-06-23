@@ -105,7 +105,76 @@ PHYSICS symbols — speak like this:
 
 confidence = how confident you are in the merged OCR + solution (0.0 = nothing readable, 1.0 = perfect).`;
 
-// ─── Direct Google Gemini REST API ────────────────────────────────────────────
+// ─── DeepSeek API call (OpenAI-compatible, primary provider) ──────────────────
+// Real model names: deepseek-chat (V3 fast) and deepseek-reasoner (R1 powerful)
+async function callDeepSeek(
+  modelId: string,
+  data: { images_b64: string[]; contextText?: string },
+  apiKey: string,
+): Promise<Parsed> {
+  const imageBlocks = data.images_b64.map((b64) => ({
+    type: "image_url" as const,
+    image_url: { url: `data:image/jpeg;base64,${b64}` },
+  }));
+
+  const userText =
+    (data.images_b64.length > 1
+      ? `I am giving you ${data.images_b64.length} frames of the SAME page. Merge the text across all frames.`
+      : "OCR this image FIRST (read every character you can see), then solve or explain.") +
+    (data.contextText?.trim()
+      ? `\n\nClass material to follow:\n${data.contextText.trim()}`
+      : "");
+
+  // Real DeepSeek model names (see platform.deepseek.com/api-docs)
+  const deepseekModelMap: Record<string, string> = {
+    "flash":              "deepseek-chat",      // DeepSeek-V3 — fast, vision-capable
+    "pro":               "deepseek-reasoner",   // DeepSeek-R1 — powerful reasoning
+    "deepseek-chat":     "deepseek-chat",
+    "deepseek-reasoner": "deepseek-reasoner",
+  };
+  const dsModel = deepseekModelMap[modelId] ?? "deepseek-chat";
+
+  const body = {
+    model: dsModel,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: userText },
+          ...imageBlocks,
+        ],
+      },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.1,
+    max_tokens: 4096,
+  };
+
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    if (res.status === 429) throw new Error("Rate limited by DeepSeek API. Try again in a moment.");
+    if (res.status === 401) throw new Error("Invalid DEEPSEEK_API_KEY. Check your .env file.");
+    if (res.status === 402) throw new Error("DeepSeek account has insufficient balance. Top up at platform.deepseek.com.");
+    throw new Error(`DeepSeek API error ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const content = json.choices?.[0]?.message?.content ?? "{}";
+  const parsed = safeParseJsonObject(content);
+  return parsed ?? { steps: [content.slice(0, 500)] };
+}
+
+// ─── Direct Google Gemini REST API (fallback when no DeepSeek key) ────────────
 async function callGemini(
   modelId: string,
   data: { images_b64: string[]; contextText?: string },
@@ -138,7 +207,14 @@ async function callGemini(
     },
   };
 
-  const geminiModel = modelId.replace("google/", "");
+  // Map short IDs to full Gemini model names
+  const geminiModelMap: Record<string, string> = {
+    "flash":             "gemini-2.5-flash",
+    "pro":              "gemini-2.5-pro",
+    "gemini-2.5-flash": "gemini-2.5-flash",
+    "gemini-2.5-pro":   "gemini-2.5-pro",
+  };
+  const geminiModel = geminiModelMap[modelId] ?? modelId.replace("google/", "");
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`;
 
   const res = await fetch(url, {
@@ -150,7 +226,7 @@ async function callGemini(
   if (!res.ok) {
     const text = await res.text();
     if (res.status === 429) throw new Error("Gemini API rate limited. Wait a moment and retry.");
-    if (res.status === 403 || res.status === 400) throw new Error("Invalid GEMINI_API_KEY. Check your key at aistudio.google.com/app/apikey");
+    if (res.status === 403 || res.status === 400) throw new Error("Invalid GEMINI_API_KEY. Check your key at aistudio.google.com/apikey");
     throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
   }
 
@@ -210,13 +286,33 @@ function isWeakResult(p: Parsed): boolean {
   return false;
 }
 
+// ─── Route call to the best available provider ───────────────────────────────
+// Priority: DeepSeek (faster + cheaper) → Gemini (fallback) → error
+async function callGateway(
+  modelId: string,
+  data: { images_b64: string[]; contextText?: string },
+  deepseekKey: string | undefined,
+  geminiKey: string | undefined,
+): Promise<Parsed> {
+  if (deepseekKey) return callDeepSeek(modelId, data, deepseekKey);
+  if (geminiKey)   return callGemini(modelId, data, geminiKey);
+  throw new Error(
+    "No AI API key configured. Add DEEPSEEK_API_KEY=sk-... or GEMINI_API_KEY=AIzaSy... to your .env file."
+  );
+}
+
 // ─── Main server function ─────────────────────────────────────────────────────
 export const analyzeImage = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => Input.parse(input))
   .handler(async ({ data }) => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not set. Get a free key at https://aistudio.google.com/app/apikey and add it to your secrets.");
+    const deepseekKey = process.env.DEEPSEEK_API_KEY;
+    const geminiKey   = process.env.GEMINI_API_KEY;
+
+    if (!deepseekKey && !geminiKey) {
+      throw new Error(
+        "No API key set. Add DEEPSEEK_API_KEY=sk-... to your .env file. " +
+        "Get a free key at platform.deepseek.com/api_keys"
+      );
     }
 
     // ----- Resolve images: single inline b64 or burst id -----
@@ -257,46 +353,42 @@ export const analyzeImage = createServerFn({ method: "POST" })
     }
 
     const mode    = data.model ?? "auto";
-    const flashId = "gemini-2.5-flash";
-    const proId   = "gemini-2.5-pro";
+    // Use correct model IDs per provider
+    const flashId = deepseekKey ? "deepseek-chat"     : "gemini-2.5-flash";
+    const proId   = deepseekKey ? "deepseek-reasoner" : "gemini-2.5-pro";
     const payload = { images_b64, contextText: data.contextText };
 
-    try {
-      if (mode === "flash") {
-        const p = await callGemini(flashId, payload, apiKey);
-        return finalize(p, flashId, false, images_b64.length);
-      }
-      if (mode === "pro") {
-        const p = await callGemini(proId, payload, apiKey);
-        return finalize(p, proId, false, images_b64.length);
-      }
-
-      // ── AUTO: Flash first, escalate to Pro if weak ──
-      let used   = flashId;
-      let result = await callGemini(flashId, payload, apiKey);
-      let escalated = false;
-
-      if (isWeakResult(result)) {
-        try {
-          const proResult = await callGemini(proId, payload, apiKey);
-          const flashLen  = (result.extractedText ?? "").trim().length;
-          const proLen    = (proResult.extractedText ?? "").trim().length;
-          if (proLen >= flashLen) {
-            result    = proResult;
-            used      = proId;
-            escalated = true;
-          }
-        } catch {
-          // Pro also failed — keep Flash result
-        }
-      }
-
-      return finalize(result, used, escalated, images_b64.length);
-
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(msg);
+    // ── Explicit model selection ──
+    if (mode === "flash") {
+      const p = await callGateway(flashId, payload, deepseekKey, geminiKey);
+      return finalize(p, flashId, false, images_b64.length);
     }
+    if (mode === "pro") {
+      const p = await callGateway(proId, payload, deepseekKey, geminiKey);
+      return finalize(p, proId, false, images_b64.length);
+    }
+
+    // ── AUTO: Flash first, escalate to Pro if weak ──
+    let used      = flashId;
+    let result    = await callGateway(flashId, payload, deepseekKey, geminiKey);
+    let escalated = false;
+
+    if (isWeakResult(result)) {
+      try {
+        const proResult = await callGateway(proId, payload, deepseekKey, geminiKey);
+        const flashLen  = (result.extractedText ?? "").trim().length;
+        const proLen    = (proResult.extractedText ?? "").trim().length;
+        if (proLen >= flashLen) {
+          result    = proResult;
+          used      = proId;
+          escalated = true;
+        }
+      } catch {
+        // Pro also failed — keep Flash result
+      }
+    }
+
+    return finalize(result, used, escalated, images_b64.length);
   });
 
 function finalize(

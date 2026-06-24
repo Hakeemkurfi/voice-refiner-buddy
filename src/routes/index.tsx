@@ -76,10 +76,14 @@ function Index() {
   const seenRef = useRef<Set<string>>(new Set());
   const contextRef = useRef("");
   const hasPriorResultRef = useRef(false);
+  const appStartedAtRef = useRef(Date.now());
+  const busyRef = useRef(false);
   const [nextInCountdown, setNextInCountdown] = useState(0);
 
   // ── Camera ON/OFF controls ─────────────────────────────────────────────────
-  const [esp32Ip, setEsp32Ip] = useState(() => localStorage.getItem("esp32ip") ?? "");
+  const [esp32Ip, setEsp32Ip] = useState(() =>
+    typeof window === "undefined" ? "" : localStorage.getItem("esp32ip") ?? "",
+  );
   const [cameraOn, setCameraOn] = useState<boolean | null>(null); // null = unknown
   const [cameraToggling, setCameraToggling] = useState(false);
   // Image display rotation (for correcting sideways captures)
@@ -88,7 +92,7 @@ function Index() {
 
   const saveEsp32Ip = (ip: string) => {
     setEsp32Ip(ip);
-    localStorage.setItem("esp32ip", ip);
+    if (typeof window !== "undefined") localStorage.setItem("esp32ip", ip);
   };
 
   const toggleCameraOnEsp32 = useCallback(async () => {
@@ -121,6 +125,10 @@ function Index() {
   useEffect(() => {
     contextRef.current = contextText;
   }, [contextText]);
+
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
 
   const sayStatus = useCallback(
     (message: string) => {
@@ -198,6 +206,15 @@ function Index() {
   const processEvent = useCallback(
     (row: EventRow, source: string) => {
       if (seenRef.current.has(row.id)) return;
+      const eventTime = new Date(row.created_at).getTime();
+      if (source === "poll" && Number.isFinite(eventTime) && eventTime < appStartedAtRef.current - 10000) {
+        seenRef.current.add(row.id);
+        return;
+      }
+      if (source === "poll" && busyRef.current) {
+        seenRef.current.add(row.id);
+        return;
+      }
       seenRef.current.add(row.id);
       const imageChars = row.image_b64?.length ?? row.image_chars ?? 0;
       setLog((l) =>
@@ -606,7 +623,7 @@ function Index() {
             </label>
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Auto-resized to ~1600 px JPEG. AI prefers DeepSeek Chat first; escalates to DeepSeek Reasoner if needed.
+            Auto-resized to ~1600 px JPEG. Gemini vision reads the image first, then gives spoken solution steps.
           </p>
         </Card>
 
@@ -762,7 +779,7 @@ function Index() {
               <div className="flex flex-wrap items-center justify-between gap-2 mt-2 text-xs text-muted-foreground">
                 <span>
                   ~{Math.round((lastImage.length * 3) / 4 / 1024)} KB jpeg • tap image to open full size
-                  {usedModel && <span className="ml-1">• {usedModel.replace("google/", "").replace("gemini-", "Gemini ").replace("deepseek-chat", "DeepSeek Chat").replace("deepseek-reasoner", "DeepSeek Reasoner").replace("-preview", "")}</span>}
+                  {usedModel && <span className="ml-1">• {usedModel.replace("google/", "").replace("gemini-", "Gemini ").replace("-preview", "")}</span>}
                 </span>
                 <Button
                   size="sm"
@@ -900,12 +917,7 @@ function Index() {
           <h2 className="font-semibold text-sm mb-2">Setup</h2>
           <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-5">
             <li>
-              Get a DeepSeek API key at{" "}
-              <a className="underline" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">
-                platform.deepseek.com/api_keys
-              </a>{" "}
-              and add it to your <code className="bg-background px-1 rounded">.env</code> file as{" "}
-              <code className="bg-background px-1 rounded">DEEPSEEK_API_KEY=...</code> — this removes the Geminin / Lovable credits dependency.
+              The app uses Gemini vision from the secure backend key, so manual photo uploads and ESP32 captures can read page images.
             </li>
             <li>
               Point your ESP32 firmware at the published URL +{" "}

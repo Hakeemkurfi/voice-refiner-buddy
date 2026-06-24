@@ -606,7 +606,7 @@ function Index() {
             </label>
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Auto-resized to ~1600 px JPEG. AI uses Gemini 2.5 Flash first; escalates to Pro if needed.
+            Auto-resized to ~1600 px JPEG. AI prefers DeepSeek Chat first; escalates to DeepSeek Reasoner if needed.
           </p>
         </Card>
 
@@ -762,7 +762,7 @@ function Index() {
               <div className="flex flex-wrap items-center justify-between gap-2 mt-2 text-xs text-muted-foreground">
                 <span>
                   ~{Math.round((lastImage.length * 3) / 4 / 1024)} KB jpeg • tap image to open full size
-                  {usedModel && <span className="ml-1">• {usedModel.replace("google/", "").replace("gemini-", "Gemini ").replace("-preview", "")}</span>}
+                  {usedModel && <span className="ml-1">• {usedModel.replace("google/", "").replace("gemini-", "Gemini ").replace("deepseek-chat", "DeepSeek Chat").replace("deepseek-reasoner", "DeepSeek Reasoner").replace("-preview", "")}</span>}
                 </span>
                 <Button
                   size="sm"
@@ -900,12 +900,12 @@ function Index() {
           <h2 className="font-semibold text-sm mb-2">Setup</h2>
           <ol className="text-xs text-muted-foreground space-y-1 list-decimal pl-5">
             <li>
-              Get a free Gemini API key at{" "}
-              <a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
-                aistudio.google.com/apikey
+              Get a DeepSeek API key at{" "}
+              <a className="underline" href="https://platform.deepseek.com/api_keys" target="_blank" rel="noreferrer">
+                platform.deepseek.com/api_keys
               </a>{" "}
               and add it to your <code className="bg-background px-1 rounded">.env</code> file as{" "}
-              <code className="bg-background px-1 rounded">GEMINI_API_KEY=...</code> — this removes the Lovable credits dependency.
+              <code className="bg-background px-1 rounded">DEEPSEEK_API_KEY=...</code> — this removes the Geminin / Lovable credits dependency.
             </li>
             <li>
               Point your ESP32 firmware at the published URL +{" "}

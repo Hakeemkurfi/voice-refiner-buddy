@@ -105,16 +105,14 @@ PHYSICS symbols — speak like this:
 
 confidence = how confident you are in the merged OCR + solution (0.0 = nothing readable, 1.0 = perfect).`;
 
-// ─── DeepSeek API call (OpenAI-compatible, primary provider) ──────────────────
-// Real model names: deepseek-chat (V3 fast) and deepseek-reasoner (R1 powerful)
-async function callDeepSeek(
+// ─── Direct Google Gemini REST API (vision OCR + solving) ─────────────────────
+async function callGemini(
   modelId: string,
   data: { images_b64: string[]; contextText?: string },
   apiKey: string,
 ): Promise<Parsed> {
-  const imageBlocks = data.images_b64.map((b64) => ({
-    type: "image_url" as const,
-    image_url: { url: `data:image/jpeg;base64,${b64}` },
+  const imageParts = data.images_b64.map((b64) => ({
+    inlineData: { mimeType: "image/jpeg", data: b64 },
   }));
 
   const userText =
@@ -125,57 +123,75 @@ async function callDeepSeek(
       ? `\n\nClass material to follow:\n${data.contextText.trim()}`
       : "");
 
-  // Real DeepSeek model names (see platform.deepseek.com/api-docs)
-  const deepseekModelMap: Record<string, string> = {
-    "flash":              "deepseek-chat",      // DeepSeek-V3 — fast, vision-capable
-    "pro":               "deepseek-reasoner",   // DeepSeek-R1 — powerful reasoning
-    "deepseek-chat":     "deepseek-chat",
-    "deepseek-reasoner": "deepseek-reasoner",
+  const geminiModelMap: Record<string, string[]> = {
+    flash: ["gemini-2.0-flash-lite"],
+    pro: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-lite"],
+    "gemini-2.5-flash": ["gemini-2.0-flash-lite"],
+    "gemini-2.5-pro": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-lite"],
   };
-  const dsModel = deepseekModelMap[modelId] ?? "deepseek-chat";
+  const modelCandidates = geminiModelMap[modelId] ?? ["gemini-2.0-flash-lite"];
 
   const body = {
-    model: dsModel,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [
       {
         role: "user",
-        content: [
-          { type: "text", text: userText },
-          ...imageBlocks,
-        ],
+        parts: [{ text: userText }, ...imageParts],
       },
     ],
-    response_format: { type: "json_object" },
-    temperature: 0.1,
-    max_tokens: 4096,
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+    },
   };
 
-  const res = await fetch("https://api.deepseek.com/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+  let lastError = "Gemini request failed.";
+  for (const model of modelCandidates) {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(25000),
+        body: JSON.stringify(body),
+      },
+    ).catch((error) => {
+      lastError = `Gemini ${model} timed out or was unreachable: ${(error as Error).message}`;
+      return null;
+    });
 
-  if (!res.ok) {
-    const text = await res.text();
-    if (res.status === 429) throw new Error("Rate limited by DeepSeek API. Try again in a moment.");
-    if (res.status === 401) throw new Error("Invalid DEEPSEEK_API_KEY. Check your .env file.");
-    if (res.status === 402) throw new Error("DeepSeek account has insufficient balance. Top up at platform.deepseek.com.");
-    throw new Error(`DeepSeek API error ${res.status}: ${text.slice(0, 300)}`);
+    if (!res) continue;
+
+    if (!res.ok) {
+      const text = await res.text();
+      if (res.status === 429 || res.status === 503 || res.status === 500) {
+        lastError = `Gemini is busy right now (${model}, ${res.status}). Please retry in a few seconds.`;
+        continue;
+      }
+      if (res.status === 400 && text.toLowerCase().includes("not found")) {
+        lastError = `Gemini model ${model} is not available; trying another model.`;
+        continue;
+      }
+      if (res.status === 400 && text.toLowerCase().includes("api key")) {
+        throw new Error("Invalid GEMINI_API_KEY. Update the Gemini key in project secrets.");
+      }
+      throw new Error(`Gemini API error ${res.status}: ${text.slice(0, 300)}`);
+    }
+
+    const json = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    const content = json.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text ?? "")
+      .join("\n")
+      .trim() ?? "{}";
+    const parsed = safeParseJsonObject(content);
+    return parsed ?? { steps: [content.slice(0, 500)] };
   }
 
-  const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = json.choices?.[0]?.message?.content ?? "{}";
-  const parsed = safeParseJsonObject(content);
-  return parsed ?? { steps: [content.slice(0, 500)] };
+  throw new Error(lastError);
 }
-
-// ─── Direct Google Gemini REST API (fallback when no DeepSeek key) ────────────
-// Gemini fallback removed: DeepSeek is the single provider.
 
 // ─── JSON parser (handles fences & extra prose) ──────────────────────────────
 function safeParseJsonObject(raw: string): Parsed | null {
@@ -221,16 +237,15 @@ function isWeakResult(p: Parsed): boolean {
   return false;
 }
 
-// ─── Route call to the best available provider ───────────────────────────────
-// Priority: DeepSeek (faster + cheaper) → Gemini (fallback) → error
+// ─── Route call to Gemini ─────────────────────────────────────────────────────
 async function callGateway(
   modelId: string,
   data: { images_b64: string[]; contextText?: string },
-  deepseekKey: string | undefined,
+  geminiKey: string | undefined,
 ): Promise<Parsed> {
-  if (deepseekKey) return callDeepSeek(modelId, data, deepseekKey);
+  if (geminiKey) return callGemini(modelId, data, geminiKey);
   throw new Error(
-    "No AI API key configured. Add DEEPSEEK_API_KEY=sk-... to your .env file."
+    "No Gemini API key configured. Add GEMINI_API_KEY in project secrets."
   );
 }
 
@@ -238,12 +253,11 @@ async function callGateway(
 export const analyzeImage = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => Input.parse(input))
   .handler(async ({ data }) => {
-    const deepseekKey = process.env.DEEPSEEK_API_KEY ?? process.env.VITE_DEEPSEEK_API_KEY;
+    const geminiKey = process.env.GEMINI_API_KEY;
 
-    if (!deepseekKey) {
+    if (!geminiKey) {
       throw new Error(
-        "No API key set. Add DEEPSEEK_API_KEY=sk-... to your .env file. " +
-        "Get a key at platform.deepseek.com/api_keys"
+        "No API key set. Add GEMINI_API_KEY in project secrets."
       );
     }
 
@@ -285,29 +299,28 @@ export const analyzeImage = createServerFn({ method: "POST" })
     }
 
     const mode    = data.model ?? "auto";
-    // Use DeepSeek model IDs
-    const flashId = "deepseek-chat";
-    const proId   = "deepseek-reasoner";
+    const flashId = "gemini-2.5-flash";
+    const proId   = "gemini-2.5-pro";
     const payload = { images_b64, contextText: data.contextText };
 
     // ── Explicit model selection ──
     if (mode === "flash") {
-      const p = await callGateway(flashId, payload, deepseekKey);
+      const p = await callGateway(flashId, payload, geminiKey);
       return finalize(p, flashId, false, images_b64.length);
     }
     if (mode === "pro") {
-      const p = await callGateway(proId, payload, deepseekKey);
+      const p = await callGateway(proId, payload, geminiKey);
       return finalize(p, proId, false, images_b64.length);
     }
 
     // ── AUTO: Flash first, escalate to Pro if weak ──
     let used      = flashId;
-    let result    = await callGateway(flashId, payload, deepseekKey);
+    let result    = await callGateway(flashId, payload, geminiKey);
     let escalated = false;
 
     if (isWeakResult(result)) {
       try {
-        const proResult = await callGateway(proId, payload, deepseekKey);
+        const proResult = await callGateway(proId, payload, geminiKey);
         const flashLen  = (result.extractedText ?? "").trim().length;
         const proLen    = (proResult.extractedText ?? "").trim().length;
         if (proLen >= flashLen) {

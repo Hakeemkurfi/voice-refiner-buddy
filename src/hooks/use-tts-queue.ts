@@ -22,6 +22,7 @@ export function useTtsQueue() {
   const manualStopRef = useRef(false);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
   const tokenRef = useRef(0); // cancels stale playbacks
+  const useBackendTtsRef = useRef(false); // urgent mode: free browser speech, no paid TTS credits
 
   useEffect(() => {
     const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
@@ -69,6 +70,7 @@ export function useTtsQueue() {
 
       const audio = ensureAudio();
       if (!audio) return fallbackToSpeech();
+      if (!useBackendTtsRef.current) return fallbackToSpeech();
 
       fetch("/api/public/tts", {
         method: "POST",
@@ -103,7 +105,10 @@ export function useTtsQueue() {
             fallbackToSpeech();
           }
         })
-        .catch(() => fallbackToSpeech());
+        .catch(() => {
+          useBackendTtsRef.current = false;
+          fallbackToSpeech();
+        });
     },
     [rate, voice, ensureAudio],
   );

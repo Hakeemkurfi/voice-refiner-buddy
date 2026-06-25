@@ -124,12 +124,26 @@ async function callGemini(
       : "");
 
   const geminiModelMap: Record<string, string[]> = {
-    flash: ["gemini-2.0-flash-lite"],
+    flash: [
+      "gemini-2.5-flash-lite",
+      "gemini-2.0-flash-lite",
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash-8b",
+      "gemini-1.5-flash",
+    ],
     pro: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-lite"],
-    "gemini-2.5-flash": ["gemini-2.0-flash-lite"],
+    "gemini-2.5-flash": [
+      "gemini-2.5-flash-lite",
+      "gemini-2.0-flash-lite",
+      "gemini-2.5-flash",
+      "gemini-2.0-flash",
+      "gemini-1.5-flash-8b",
+      "gemini-1.5-flash",
+    ],
     "gemini-2.5-pro": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash-lite"],
   };
-  const modelCandidates = geminiModelMap[modelId] ?? ["gemini-2.0-flash-lite"];
+  const modelCandidates = geminiModelMap[modelId] ?? ["gemini-2.5-flash-lite", "gemini-2.0-flash-lite"];
 
   const body = {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
@@ -141,7 +155,7 @@ async function callGemini(
     ],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 8192,
+      maxOutputTokens: 4096,
       responseMimeType: "application/json",
     },
   };
@@ -153,7 +167,7 @@ async function callGemini(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(25000),
+        signal: AbortSignal.timeout(20000),
         body: JSON.stringify(body),
       },
     ).catch((error) => {
@@ -166,7 +180,7 @@ async function callGemini(
     if (!res.ok) {
       const text = await res.text();
       if (res.status === 429 || res.status === 503 || res.status === 500) {
-        lastError = `Gemini is busy right now (${model}, ${res.status}). Please retry in a few seconds.`;
+        lastError = geminiErrorMessage(res.status, model, text);
         continue;
       }
       if (res.status === 400 && text.toLowerCase().includes("not found")) {
@@ -191,6 +205,17 @@ async function callGemini(
   }
 
   throw new Error(lastError);
+}
+
+function geminiErrorMessage(status: number, model: string, body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { error?: { status?: string; message?: string } };
+    const statusText = parsed.error?.status ? ` ${parsed.error.status}` : "";
+    const message = parsed.error?.message?.replace(/\s+/g, " ").trim();
+    if (message) return `Gemini ${model} failed with HTTP ${status}${statusText}: ${message}`;
+  } catch { /* keep fallback below */ }
+  const clean = body.replace(/\s+/g, " ").trim().slice(0, 500);
+  return `Gemini ${model} failed with HTTP ${status}${clean ? `: ${clean}` : ""}`;
 }
 
 // ─── JSON parser (handles fences & extra prose) ──────────────────────────────

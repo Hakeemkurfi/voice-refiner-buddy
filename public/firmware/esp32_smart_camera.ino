@@ -731,6 +731,18 @@ static BLEClient*           ringClient  = nullptr;
 static bool   ringConnected             = false;
 static bool   ringScanRunning           = false;
 static bool   calibrateMode            = false;
+
+// ── Guided calibration wizard ─────────────────────────────────────────
+// Type "wizard" in Serial Monitor.  It walks through each button, asks
+// you to press it 3 times, tallies the d[1] codes (ignoring gyro 0xF4
+// noise) and at the end prints a ready-to-paste mapping block.
+static bool   wizMode      = false;
+static int    wizStep      = 0;          // 0=middle 1=left 2=right 3=up 4=down 5=done
+static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT (◀)", "RIGHT (▶)", "UP (▲)", "DOWN (▼)" };
+static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "replay", "stop" };
+static uint8_t wizCounts[5][256];        // [step][d1] = press count
+static uint8_t wizFinal [5];             // recorded d[1] per step
+static bool    wizHas   [5];             // recorded flag
 static unsigned long lastBleScan        = 0;
 static unsigned long lastRingAction     = 0;
 static unsigned long lastRingConnectAttempt = 0;
@@ -874,6 +886,41 @@ void handleRingReport(uint8_t* d, size_t len) {
     // Gyro stream — skip silently
     return;
   }
+
+  // ── Guided wizard: tally d[1] codes for the active button ────────────
+  if (wizMode && wizStep < 5 && len >= 2) {
+    uint8_t code = d[1];
+    if (wizCounts[wizStep][code] < 255) wizCounts[wizStep][code]++;
+    Serial.printf("  [wiz] %s press recorded: d[1]=0x%02X  (count=%u)\n",
+                  WIZ_NAMES[wizStep], code, wizCounts[wizStep][code]);
+    if (wizCounts[wizStep][code] >= 3) {
+      wizFinal[wizStep] = code;
+      wizHas  [wizStep] = true;
+      Serial.printf("  ✓ %s LOCKED as d[1]=0x%02X  →  action=\"%s\"\n",
+                    WIZ_NAMES[wizStep], code, WIZ_ACT[wizStep]);
+      wizStep++;
+      if (wizStep < 5) {
+        Serial.printf("\n>>> Now press %s button 3 times <<<\n", WIZ_NAMES[wizStep]);
+      } else {
+        Serial.println("\n╔════════════ WIZARD COMPLETE ════════════╗");
+        Serial.println(  "║  Paste this into handleRingReport():    ║");
+        Serial.println(  "╚═════════════════════════════════════════╝");
+        for (int i = 0; i < 5; i++) {
+          if (!wizHas[i]) { Serial.printf("  // %s — NOT captured\n", WIZ_NAMES[i]); continue; }
+          if (i == 0)
+            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringFireMiddle(false); return; }  // %s\n",
+                          wizFinal[i], WIZ_NAMES[i]);
+          else
+            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringAction(\"%s\"); return; }  // %s\n",
+                          wizFinal[i], WIZ_ACT[i], WIZ_NAMES[i]);
+        }
+        Serial.println("\n  Share this block with the AI to bake it into the firmware permanently.");
+        wizMode = false;
+      }
+    }
+    return;  // never trigger actions while wizard is active
+  }
+
   // Same for 0x0F 0xEF format air-mouse (some firmware versions)
   if (len >= 3 && d[0] == 0x0F && d[1] == 0xEF) {
     // Old vendor air-mouse format — only match known codes below
@@ -1430,6 +1477,20 @@ void handleSerial() {
           Serial.println("║  CALIBRATE MODE OFF — buttons LIVE  ║");
           Serial.println("╚═════════════════════════════════════╝");
         }
+      }
+      else if (line.equalsIgnoreCase("wizard")) {
+        wizMode = true;
+        wizStep = 0;
+        for (int i = 0; i < 5; i++) { wizHas[i] = false; wizFinal[i] = 0;
+          for (int j = 0; j < 256; j++) wizCounts[i][j] = 0; }
+        Serial.println();
+        Serial.println("╔══════════════════════════════════════════════╗");
+        Serial.println("║  GUIDED RING BUTTON WIZARD                   ║");
+        Serial.println("║  I will tell you which button to press.      ║");
+        Serial.println("║  Press it firmly 3 times. Wait for ✓ LOCKED. ║");
+        Serial.println("║  Gyro/motion is ignored automatically.       ║");
+        Serial.println("╚══════════════════════════════════════════════╝");
+        Serial.printf("\n>>> Press %s button 3 times <<<\n", WIZ_NAMES[0]);
       }
       else if (line.length() > 0) {
         Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip)\n",

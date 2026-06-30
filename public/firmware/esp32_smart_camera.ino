@@ -740,17 +740,25 @@ static bool   ringConnected             = false;
 static bool   ringScanRunning           = false;
 static bool   calibrateMode            = false;
 
-// ── Guided calibration wizard ─────────────────────────────────────────
-// Type "wizard" in Serial Monitor.  It walks through each button, asks
-// you to press it 3 times, tallies the d[1] codes (ignoring gyro 0xF4
-// noise) and at the end prints a ready-to-paste mapping block.
+// ── Guided calibration wizard v2 ──────────────────────────────────────
+// Type "wizard" in Serial Monitor.  For each of 5 buttons it asks for 3
+// presses, records the FULL raw report bytes of every notification that
+// arrives during each press (so multi-report buttons are not lost), and
+// writes everything to LittleFS at /wizlog.txt — pull that one file (or
+// open http://<esp-ip>/wizlog) instead of screenshotting each line.
+// Type "wizshow" to dump the saved log again.  Type "wizreset" to clear.
 static bool   wizMode      = false;
 static int    wizStep      = 0;          // 0=middle 1=left 2=right 3=up 4=down 5=done
-static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT (◀)", "RIGHT (▶)", "UP (▲)", "DOWN (▼)" };
+static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT", "RIGHT", "UP", "DOWN" };
 static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "replay", "stop" };
-static uint8_t wizCounts[5][256];        // [step][d1] = press count
+static uint8_t wizCounts[5][256];        // [step][d1] = report count (legacy)
 static uint8_t wizFinal [5];             // recorded d[1] per step
 static bool    wizHas   [5];             // recorded flag
+// New: press-event tracking (a "press" = transition all-zero → non-zero)
+static int          wizPressIdx     = 0;       // 0..2 within current step
+static bool         wizPrevPressed  = false;   // last report had any non-zero byte
+static unsigned long wizLastEdgeAt  = 0;
+static bool         wizFsReady      = false;
 static unsigned long lastBleScan        = 0;
 static unsigned long lastRingAction     = 0;
 static unsigned long lastRingConnectAttempt = 0;

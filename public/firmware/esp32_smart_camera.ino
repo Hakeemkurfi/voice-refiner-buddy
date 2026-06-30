@@ -1478,6 +1478,20 @@ void handleSerial() {
           Serial.println("╚═════════════════════════════════════╝");
         }
       }
+      else if (line.equalsIgnoreCase("wizard")) {
+        wizMode = true;
+        wizStep = 0;
+        for (int i = 0; i < 5; i++) { wizHas[i] = false; wizFinal[i] = 0;
+          for (int j = 0; j < 256; j++) wizCounts[i][j] = 0; }
+        Serial.println();
+        Serial.println("╔══════════════════════════════════════════════╗");
+        Serial.println("║  GUIDED RING BUTTON WIZARD                   ║");
+        Serial.println("║  I will tell you which button to press.      ║");
+        Serial.println("║  Press it firmly 3 times. Wait for ✓ LOCKED. ║");
+        Serial.println("║  Gyro/motion is ignored automatically.       ║");
+        Serial.println("╚══════════════════════════════════════════════╝");
+        Serial.printf("\n>>> Press %s button 3 times <<<\n", WIZ_NAMES[0]);
+      }
       else if (line.length() > 0) {
         Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip)\n",
                       line.c_str());

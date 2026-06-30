@@ -1217,13 +1217,18 @@ bool captureAndSend() {
 
   sensor_t* s = esp_camera_sensor_get();
 
+  // Restore QXGA in case the live preview left us in VGA
+  if (s) s->set_framesize(s, FRAMESIZE_QXGA);
+  // Flush stale frames from the previous resolution
+  for (int i = 0; i < 2; i++) { camera_fb_t* fb = esp_camera_fb_get(); if (fb) esp_camera_fb_return(fb); }
+
   // Stage A — Warmup + parallel AF
   Serial.println("[capture] Stage A — warmup + parallel AF");
   bool afStarted = false;
   for (int i = 0; i < 4; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
-    if (i == 1 && !afStarted && isOv5640 && ov5640AfReady) {
+    if (i == 1 && !afStarted && isOv5640) {  // drop ov5640AfReady gate
       s->set_reg(s, 0x3022, 0xff, 0x08);
       delay(20);
       s->set_reg(s, 0x3023, 0xff, 0x01);

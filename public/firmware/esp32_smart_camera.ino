@@ -934,8 +934,24 @@ void handleRingReport(uint8_t* d, size_t len) {
   Serial.println();
   if (len == 0) return;
 
+  // ── Detect this ring's MOUSE-MODE report shape: [btn, dx, dy, 0x1F] ──
+  // byte[0] = mouse button mask (bit0=L, bit1=R, bit2=M)
+  // byte[1] = signed X delta   (LEFT/RIGHT swipe on touch ring)
+  // byte[2] = signed Y delta   (UP/DOWN swipe on touch ring)
+  // byte[3] = 0x1F constant
+  bool isMouseMode = (len == 4 && d[3] == 0x1F);
+  uint8_t mouseBtn = isMouseMode ? (d[0] & 0x07) : 0;
+
   bool anyPressed = false;
-  for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
+  if (isMouseMode) {
+    // In mouse mode only the BUTTON byte counts as "pressed".
+    // Motion bytes (dx/dy) drift constantly from the gyro so we MUST ignore
+    // them for press/release edge detection.
+    anyPressed = (mouseBtn != 0);
+  } else {
+    for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
+  }
+
 
   // ── Wizard interception (must run BEFORE gyro filter & release handling)
   if (wizMode && wizStep < 5) {
@@ -947,30 +963,42 @@ void handleRingReport(uint8_t* d, size_t len) {
       for (size_t i = 0; i < len; i++) { char b[4]; snprintf(b, sizeof(b), "%02X ", d[i]); hex += b; }
       hex.trim();
 
-      // Press = transition from all-zero to non-zero (debounced 80 ms)
-      if (anyPressed && !wizPrevPressed && millis() - wizLastEdgeAt > 80) {
+      // For mouse-mode reports [btn,dx,dy,0x1F] only the BUTTON byte
+      // counts as "pressed" — motion bytes drift constantly.
+      bool pressedForWiz;
+      if (isMouseMode) {
+        pressedForWiz = (mouseBtn != 0);
+      } else {
+        pressedForWiz = anyPressed;
+      }
+
+      // Press = transition from not-pressed to pressed (debounced 80 ms)
+      if (pressedForWiz && !wizPrevPressed && millis() - wizLastEdgeAt > 80) {
         wizPressIdx++;
         wizLastEdgeAt = millis();
         wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " press #" + wizPressIdx + " edge");
-        // Lock d[1] code from the FIRST press of each button
-        if (len >= 2 && !wizHas[wizStep]) {
-          wizFinal[wizStep] = d[1];
+        // Lock signature from the FIRST press of each button.
+        // For mouse-mode use d[0] (button mask); otherwise d[1].
+        uint8_t sig = isMouseMode ? d[0] : (len >= 2 ? d[1] : 0);
+        if (!wizHas[wizStep]) {
+          wizFinal[wizStep] = sig;
           wizHas[wizStep]   = true;
         }
       }
-      if (!anyPressed && wizPrevPressed) {
+      if (!pressedForWiz && wizPrevPressed) {
         wizLastEdgeAt = millis();
         wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " release");
       }
-      wizPrevPressed = anyPressed;
+      wizPrevPressed = pressedForWiz;
 
-      // Log every non-zero report in full (multi-byte buttons preserved)
-      if (anyPressed) {
+      // Log every report (mouse-mode logs only when btn pressed to cut noise)
+      if (pressedForWiz) {
         if (len >= 2 && wizCounts[wizStep][d[1]] < 255) wizCounts[wizStep][d[1]]++;
         wizLog(String("[wiz] ") + WIZ_NAMES[wizStep]
                + " step=" + wizStep + " press=" + wizPressIdx
                + " len=" + len + " bytes=" + hex);
       }
+
 
       // After 3 press edges advance
       if (wizPressIdx >= 3) {
@@ -1023,6 +1051,56 @@ void handleRingReport(uint8_t* d, size_t len) {
 
 
 
+
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║  MOUSE-MODE RING (your S10 ring, captured 2026-06-30)                ║
+  // ║  Report = [btn, dx, dy, 0x1F]                                        ║
+  // ║  - Any button bit  → MIDDLE (capture)                                ║
+  // ║  - Sustained -X    → prev   (LEFT)                                   ║
+  // ║  - Sustained +X    → next   (RIGHT)                                  ║
+  // ║  - Sustained +Y    → volume up (UP)                                  ║
+  // ║  - Sustained -Y    → volume down (DOWN)                              ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
+  if (isMouseMode) {
+    // Button click on the ring (any of L/R/M bits set) = MIDDLE action
+    static bool   mmPrevBtn   = false;
+    static uint32_t mmBtnDownAt = 0;
+    bool btnNow = (mouseBtn != 0);
+    if (btnNow && !mmPrevBtn) {
+      mmBtnDownAt = millis();
+      ringFireMiddle(false);          // press edge → capture / toggle
+    } else if (!btnNow && mmPrevBtn) {
+      ringFireMiddle(true);            // release → resolve short/long
+    }
+    mmPrevBtn = btnNow;
+
+    // Direction = accumulate signed X/Y until we cross a threshold, then
+    // fire one discrete action and reset. This turns the ring's continuous
+    // swipe into clean prev/next/vol±.
+    int8_t dx = (int8_t)d[1];
+    int8_t dy = (int8_t)d[2];
+    static int32_t accX = 0, accY = 0;
+    static uint32_t lastMoveAt = 0;
+    const int32_t THRESH = 60;          // tune: lower = more sensitive
+    const uint32_t COOLDOWN = 180;      // ms between direction fires
+
+    // Decay accumulator if user stopped moving (so drift doesn't add up)
+    if (millis() - lastMoveAt > 250) { accX = 0; accY = 0; }
+    if (dx != 0 || dy != 0) lastMoveAt = millis();
+
+    accX += dx;
+    accY += dy;
+
+    static uint32_t lastDirAt = 0;
+    if (millis() - lastDirAt > COOLDOWN) {
+      if (accX >  THRESH) { ringAction("next");   accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accX < -THRESH) { ringAction("prev");   accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accY < -THRESH) { ringAction("volup");  accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accY >  THRESH) { ringAction("voldn");  accX = 0; accY = 0; lastDirAt = millis(); return; }
+    }
+    return;   // handled — don't fall through to keyboard fallbacks
+  }
+
   // Same for 0x0F 0xEF format air-mouse (some firmware versions)
   if (len >= 3 && d[0] == 0x0F && d[1] == 0xEF) {
     // Old vendor air-mouse format — only match known codes below
@@ -1036,6 +1114,7 @@ void handleRingReport(uint8_t* d, size_t len) {
       default: return;  // ignore unknown vendor codes
     }
   }
+
 
   // ── Deduplicate rapid repeats ─────────────────────────────────────────
   uint32_t h = 0;

@@ -877,6 +877,39 @@ void ringFireMiddle(bool isRelease) {
   }
 }
 
+// ── Wizard helpers: LittleFS log of every press, raw bytes intact ────
+static void wizFsBoot() {
+  if (wizFsReady) return;
+  if (LittleFS.begin(true)) { wizFsReady = true; }
+  else Serial.println("[wiz] LittleFS mount FAILED — log will be serial-only");
+}
+static void wizLog(const String& line) {
+  Serial.println(line);
+  if (!wizFsReady) return;
+  File f = LittleFS.open("/wizlog.txt", FILE_APPEND);
+  if (!f) return;
+  f.println(line);
+  f.close();
+}
+static void wizLogReset(const char* header) {
+  wizFsBoot();
+  if (!wizFsReady) return;
+  File f = LittleFS.open("/wizlog.txt", FILE_WRITE);
+  if (!f) return;
+  f.println(header);
+  f.close();
+}
+static void wizDumpFile() {
+  wizFsBoot();
+  if (!wizFsReady) { Serial.println("[wiz] no FS"); return; }
+  File f = LittleFS.open("/wizlog.txt", FILE_READ);
+  if (!f) { Serial.println("[wiz] /wizlog.txt not found yet — run 'wizard' first"); return; }
+  Serial.println("──── /wizlog.txt ────");
+  while (f.available()) Serial.write(f.read());
+  Serial.println("\n──── end ────");
+  f.close();
+}
+
 void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");
   for (size_t i = 0; i < len; i++) Serial.printf(" %02X", d[i]);
@@ -886,6 +919,78 @@ void handleRingReport(uint8_t* d, size_t len) {
   bool anyPressed = false;
   for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
 
+  // ── Wizard interception (must run BEFORE gyro filter & release handling)
+  if (wizMode && wizStep < 5) {
+    // Ignore obvious gyro stream so it doesn't pollute the log
+    bool isGyro = (len >= 3 && d[1] == 0xF4);
+    if (!isGyro) {
+      // Format the raw report once
+      String hex = "";
+      for (size_t i = 0; i < len; i++) { char b[4]; snprintf(b, sizeof(b), "%02X ", d[i]); hex += b; }
+      hex.trim();
+
+      // Press = transition from all-zero to non-zero (debounced 80 ms)
+      if (anyPressed && !wizPrevPressed && millis() - wizLastEdgeAt > 80) {
+        wizPressIdx++;
+        wizLastEdgeAt = millis();
+        wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " press #" + wizPressIdx + " edge");
+        // Lock d[1] code from the FIRST press of each button
+        if (len >= 2 && !wizHas[wizStep]) {
+          wizFinal[wizStep] = d[1];
+          wizHas[wizStep]   = true;
+        }
+      }
+      if (!anyPressed && wizPrevPressed) {
+        wizLastEdgeAt = millis();
+        wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " release");
+      }
+      wizPrevPressed = anyPressed;
+
+      // Log every non-zero report in full (multi-byte buttons preserved)
+      if (anyPressed) {
+        if (len >= 2 && wizCounts[wizStep][d[1]] < 255) wizCounts[wizStep][d[1]]++;
+        wizLog(String("[wiz] ") + WIZ_NAMES[wizStep]
+               + " step=" + wizStep + " press=" + wizPressIdx
+               + " len=" + len + " bytes=" + hex);
+      }
+
+      // After 3 press edges advance
+      if (wizPressIdx >= 3) {
+        wizLog(String("[wiz] ✓ ") + WIZ_NAMES[wizStep]
+               + " LOCKED d[1]=0x" + String(wizFinal[wizStep], HEX)
+               + " action=" + WIZ_ACT[wizStep]);
+        wizStep++;
+        wizPressIdx    = 0;
+        wizPrevPressed = false;
+        if (wizStep < 5) {
+          wizLog(String("\n>>> Now press ") + WIZ_NAMES[wizStep] + " button 3 times <<<");
+        } else {
+          wizLog("\n╔════════════ WIZARD COMPLETE ════════════╗");
+          wizLog(  "║  Paste this into handleRingReport():    ║");
+          wizLog(  "╚═════════════════════════════════════════╝");
+          for (int i = 0; i < 5; i++) {
+            char buf[160];
+            if (!wizHas[i]) {
+              snprintf(buf, sizeof(buf), "  // %s — NOT captured", WIZ_NAMES[i]);
+            } else if (i == 0) {
+              snprintf(buf, sizeof(buf),
+                "  if (len >= 2 && d[1] == 0x%02X) { ringFireMiddle(false); return; }  // %s",
+                wizFinal[i], WIZ_NAMES[i]);
+            } else {
+              snprintf(buf, sizeof(buf),
+                "  if (len >= 2 && d[1] == 0x%02X) { ringAction(\"%s\"); return; }  // %s",
+                wizFinal[i], WIZ_ACT[i], WIZ_NAMES[i]);
+            }
+            wizLog(buf);
+          }
+          wizLog("\n  Full log saved to /wizlog.txt — type 'wizshow' to dump, or open http://<esp-ip>/wizlog");
+          wizMode = false;
+        }
+      }
+    }
+    return;   // never trigger actions while wizard is active
+  }
+
   if (!anyPressed) {
     // All-zero report = button release
     ringFireMiddle(true);   // resolve any pending middle press
@@ -894,45 +999,10 @@ void handleRingReport(uint8_t* d, size_t len) {
   }
 
   // ── IGNORE gyro/air-mouse streaming data ─────────────────────────────
-  // The S10 ring continuously broadcasts accelerometer/air-mouse data in
-  // the format:  [d0=00 or 07]  [d1=F4]  [d2 changes]  [d3 changes]
-  // These are NOT button presses — d2 and d3 are sensor counter values
-  // that increment/decrement each poll cycle.  We discard them here.
   if (len >= 3 && d[1] == 0xF4) {
-    // Gyro stream — skip silently
     return;
   }
 
-  // ── Guided wizard: tally d[1] codes for the active button ────────────
-  if (wizMode && wizStep < 5 && len >= 2) {
-    uint8_t code = d[1];
-    if (wizCounts[wizStep][code] < 255) wizCounts[wizStep][code]++;
-    Serial.printf("  [wiz] %s press recorded: d[1]=0x%02X  (count=%u)\n",
-                  WIZ_NAMES[wizStep], code, wizCounts[wizStep][code]);
-    if (wizCounts[wizStep][code] >= 3) {
-      wizFinal[wizStep] = code;
-      wizHas  [wizStep] = true;
-      Serial.printf("  ✓ %s LOCKED as d[1]=0x%02X  →  action=\"%s\"\n",
-                    WIZ_NAMES[wizStep], code, WIZ_ACT[wizStep]);
-      wizStep++;
-      if (wizStep < 5) {
-        Serial.printf("\n>>> Now press %s button 3 times <<<\n", WIZ_NAMES[wizStep]);
-      } else {
-        Serial.println("\n╔════════════ WIZARD COMPLETE ════════════╗");
-        Serial.println(  "║  Paste this into handleRingReport():    ║");
-        Serial.println(  "╚═════════════════════════════════════════╝");
-        for (int i = 0; i < 5; i++) {
-          if (!wizHas[i]) { Serial.printf("  // %s — NOT captured\n", WIZ_NAMES[i]); continue; }
-          if (i == 0)
-            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringFireMiddle(false); return; }  // %s\n",
-                          wizFinal[i], WIZ_NAMES[i]);
-          else
-            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringAction(\"%s\"); return; }  // %s\n",
-                          wizFinal[i], WIZ_ACT[i], WIZ_NAMES[i]);
-        }
-        Serial.println("\n  Share this block with the AI to bake it into the firmware permanently.");
-        wizMode = false;
-      }
     }
     return;  // never trigger actions while wizard is active
   }

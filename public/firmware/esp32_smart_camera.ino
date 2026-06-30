@@ -1003,9 +1003,7 @@ void handleRingReport(uint8_t* d, size_t len) {
     return;
   }
 
-    }
-    return;  // never trigger actions while wizard is active
-  }
+
 
   // Same for 0x0F 0xEF format air-mouse (some firmware versions)
   if (len >= 3 && d[0] == 0x0F && d[1] == 0xEF) {

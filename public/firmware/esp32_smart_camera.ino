@@ -934,8 +934,24 @@ void handleRingReport(uint8_t* d, size_t len) {
   Serial.println();
   if (len == 0) return;
 
+  // ── Detect this ring's MOUSE-MODE report shape: [btn, dx, dy, 0x1F] ──
+  // byte[0] = mouse button mask (bit0=L, bit1=R, bit2=M)
+  // byte[1] = signed X delta   (LEFT/RIGHT swipe on touch ring)
+  // byte[2] = signed Y delta   (UP/DOWN swipe on touch ring)
+  // byte[3] = 0x1F constant
+  bool isMouseMode = (len == 4 && d[3] == 0x1F);
+  uint8_t mouseBtn = isMouseMode ? (d[0] & 0x07) : 0;
+
   bool anyPressed = false;
-  for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
+  if (isMouseMode) {
+    // In mouse mode only the BUTTON byte counts as "pressed".
+    // Motion bytes (dx/dy) drift constantly from the gyro so we MUST ignore
+    // them for press/release edge detection.
+    anyPressed = (mouseBtn != 0);
+  } else {
+    for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
+  }
+
 
   // ── Wizard interception (must run BEFORE gyro filter & release handling)
   if (wizMode && wizStep < 5) {

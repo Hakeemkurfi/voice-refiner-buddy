@@ -49,6 +49,7 @@
 #include <BLEClient.h>
 #include <BLESecurity.h>
 #include <BLERemoteDescriptor.h>
+#include <LittleFS.h>
 #include <map>
 
 // ====== EDIT THESE ======
@@ -346,16 +347,23 @@ void toggleCamera() {
 
 void connectWifi() {
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);             // better association reliability
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("WiFi");
+  Serial.printf("WiFi connecting to \"%s\"", WIFI_SSID);
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
-    delay(400); Serial.print(".");
+  // Short non-blocking-ish wait so BLE/wizard can start even if AP is down.
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) {
+    delay(300); Serial.print(".");
   }
-  if (WiFi.status() == WL_CONNECTED)
-    Serial.printf("\nIP: %s\n", WiFi.localIP().toString().c_str());
-  else
-    Serial.println("\nWiFi FAILED — will retry in loop()");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[wifi] OK  IP=%s  RSSI=%d dBm\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  } else {
+    wl_status_t s = WiFi.status();
+    Serial.printf("\n[wifi] not connected yet (status=%d). Will retry every 8s in loop().\n", (int)s);
+    Serial.println("[wifi] Reasons: wrong SSID/password, 5GHz-only AP (ESP32 needs 2.4GHz), or weak signal.");
+    Serial.println("[wifi] BLE ring + wizard will still work without WiFi.");
+  }
 }
 
 // ============================================================
@@ -555,6 +563,13 @@ void startLocalDashboard() {
       String("<p>") + (ok ? "✓ Prev sent." : "✗ Prev failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
+  localServer.on("/wizlog", []() {
+    if (!LittleFS.begin(true)) { localServer.send(500, "text/plain", "FS mount failed"); return; }
+    File f = LittleFS.open("/wizlog.txt", FILE_READ);
+    if (!f) { localServer.send(404, "text/plain", "No /wizlog.txt yet — run 'wizard' in Serial Monitor"); return; }
+    localServer.streamFile(f, "text/plain");
+    f.close();
+  });
   localServer.begin();
   Serial.printf("Local dashboard: http://%s/\n", WiFi.localIP().toString().c_str());
 }
@@ -732,17 +747,25 @@ static bool   ringConnected             = false;
 static bool   ringScanRunning           = false;
 static bool   calibrateMode            = false;
 
-// ── Guided calibration wizard ─────────────────────────────────────────
-// Type "wizard" in Serial Monitor.  It walks through each button, asks
-// you to press it 3 times, tallies the d[1] codes (ignoring gyro 0xF4
-// noise) and at the end prints a ready-to-paste mapping block.
+// ── Guided calibration wizard v2 ──────────────────────────────────────
+// Type "wizard" in Serial Monitor.  For each of 5 buttons it asks for 3
+// presses, records the FULL raw report bytes of every notification that
+// arrives during each press (so multi-report buttons are not lost), and
+// writes everything to LittleFS at /wizlog.txt — pull that one file (or
+// open http://<esp-ip>/wizlog) instead of screenshotting each line.
+// Type "wizshow" to dump the saved log again.  Type "wizreset" to clear.
 static bool   wizMode      = false;
 static int    wizStep      = 0;          // 0=middle 1=left 2=right 3=up 4=down 5=done
-static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT (◀)", "RIGHT (▶)", "UP (▲)", "DOWN (▼)" };
+static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT", "RIGHT", "UP", "DOWN" };
 static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "replay", "stop" };
-static uint8_t wizCounts[5][256];        // [step][d1] = press count
+static uint8_t wizCounts[5][256];        // [step][d1] = report count (legacy)
 static uint8_t wizFinal [5];             // recorded d[1] per step
 static bool    wizHas   [5];             // recorded flag
+// New: press-event tracking (a "press" = transition all-zero → non-zero)
+static int          wizPressIdx     = 0;       // 0..2 within current step
+static bool         wizPrevPressed  = false;   // last report had any non-zero byte
+static unsigned long wizLastEdgeAt  = 0;
+static bool         wizFsReady      = false;
 static unsigned long lastBleScan        = 0;
 static unsigned long lastRingAction     = 0;
 static unsigned long lastRingConnectAttempt = 0;
@@ -861,6 +884,39 @@ void ringFireMiddle(bool isRelease) {
   }
 }
 
+// ── Wizard helpers: LittleFS log of every press, raw bytes intact ────
+static void wizFsBoot() {
+  if (wizFsReady) return;
+  if (LittleFS.begin(true)) { wizFsReady = true; }
+  else Serial.println("[wiz] LittleFS mount FAILED — log will be serial-only");
+}
+static void wizLog(const String& line) {
+  Serial.println(line);
+  if (!wizFsReady) return;
+  File f = LittleFS.open("/wizlog.txt", FILE_APPEND);
+  if (!f) return;
+  f.println(line);
+  f.close();
+}
+static void wizLogReset(const char* header) {
+  wizFsBoot();
+  if (!wizFsReady) return;
+  File f = LittleFS.open("/wizlog.txt", FILE_WRITE);
+  if (!f) return;
+  f.println(header);
+  f.close();
+}
+static void wizDumpFile() {
+  wizFsBoot();
+  if (!wizFsReady) { Serial.println("[wiz] no FS"); return; }
+  File f = LittleFS.open("/wizlog.txt", FILE_READ);
+  if (!f) { Serial.println("[wiz] /wizlog.txt not found yet — run 'wizard' first"); return; }
+  Serial.println("──── /wizlog.txt ────");
+  while (f.available()) Serial.write(f.read());
+  Serial.println("\n──── end ────");
+  f.close();
+}
+
 void handleRingReport(uint8_t* d, size_t len) {
   Serial.print("[ring] report:");
   for (size_t i = 0; i < len; i++) Serial.printf(" %02X", d[i]);
@@ -870,6 +926,78 @@ void handleRingReport(uint8_t* d, size_t len) {
   bool anyPressed = false;
   for (size_t i = 0; i < len; i++) if (d[i] != 0x00) anyPressed = true;
 
+  // ── Wizard interception (must run BEFORE gyro filter & release handling)
+  if (wizMode && wizStep < 5) {
+    // Ignore obvious gyro stream so it doesn't pollute the log
+    bool isGyro = (len >= 3 && d[1] == 0xF4);
+    if (!isGyro) {
+      // Format the raw report once
+      String hex = "";
+      for (size_t i = 0; i < len; i++) { char b[4]; snprintf(b, sizeof(b), "%02X ", d[i]); hex += b; }
+      hex.trim();
+
+      // Press = transition from all-zero to non-zero (debounced 80 ms)
+      if (anyPressed && !wizPrevPressed && millis() - wizLastEdgeAt > 80) {
+        wizPressIdx++;
+        wizLastEdgeAt = millis();
+        wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " press #" + wizPressIdx + " edge");
+        // Lock d[1] code from the FIRST press of each button
+        if (len >= 2 && !wizHas[wizStep]) {
+          wizFinal[wizStep] = d[1];
+          wizHas[wizStep]   = true;
+        }
+      }
+      if (!anyPressed && wizPrevPressed) {
+        wizLastEdgeAt = millis();
+        wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " release");
+      }
+      wizPrevPressed = anyPressed;
+
+      // Log every non-zero report in full (multi-byte buttons preserved)
+      if (anyPressed) {
+        if (len >= 2 && wizCounts[wizStep][d[1]] < 255) wizCounts[wizStep][d[1]]++;
+        wizLog(String("[wiz] ") + WIZ_NAMES[wizStep]
+               + " step=" + wizStep + " press=" + wizPressIdx
+               + " len=" + len + " bytes=" + hex);
+      }
+
+      // After 3 press edges advance
+      if (wizPressIdx >= 3) {
+        wizLog(String("[wiz] ✓ ") + WIZ_NAMES[wizStep]
+               + " LOCKED d[1]=0x" + String(wizFinal[wizStep], HEX)
+               + " action=" + WIZ_ACT[wizStep]);
+        wizStep++;
+        wizPressIdx    = 0;
+        wizPrevPressed = false;
+        if (wizStep < 5) {
+          wizLog(String("\n>>> Now press ") + WIZ_NAMES[wizStep] + " button 3 times <<<");
+        } else {
+          wizLog("\n╔════════════ WIZARD COMPLETE ════════════╗");
+          wizLog(  "║  Paste this into handleRingReport():    ║");
+          wizLog(  "╚═════════════════════════════════════════╝");
+          for (int i = 0; i < 5; i++) {
+            char buf[160];
+            if (!wizHas[i]) {
+              snprintf(buf, sizeof(buf), "  // %s — NOT captured", WIZ_NAMES[i]);
+            } else if (i == 0) {
+              snprintf(buf, sizeof(buf),
+                "  if (len >= 2 && d[1] == 0x%02X) { ringFireMiddle(false); return; }  // %s",
+                wizFinal[i], WIZ_NAMES[i]);
+            } else {
+              snprintf(buf, sizeof(buf),
+                "  if (len >= 2 && d[1] == 0x%02X) { ringAction(\"%s\"); return; }  // %s",
+                wizFinal[i], WIZ_ACT[i], WIZ_NAMES[i]);
+            }
+            wizLog(buf);
+          }
+          wizLog("\n  Full log saved to /wizlog.txt — type 'wizshow' to dump, or open http://<esp-ip>/wizlog");
+          wizMode = false;
+        }
+      }
+    }
+    return;   // never trigger actions while wizard is active
+  }
+
   if (!anyPressed) {
     // All-zero report = button release
     ringFireMiddle(true);   // resolve any pending middle press
@@ -878,48 +1006,11 @@ void handleRingReport(uint8_t* d, size_t len) {
   }
 
   // ── IGNORE gyro/air-mouse streaming data ─────────────────────────────
-  // The S10 ring continuously broadcasts accelerometer/air-mouse data in
-  // the format:  [d0=00 or 07]  [d1=F4]  [d2 changes]  [d3 changes]
-  // These are NOT button presses — d2 and d3 are sensor counter values
-  // that increment/decrement each poll cycle.  We discard them here.
   if (len >= 3 && d[1] == 0xF4) {
-    // Gyro stream — skip silently
     return;
   }
 
-  // ── Guided wizard: tally d[1] codes for the active button ────────────
-  if (wizMode && wizStep < 5 && len >= 2) {
-    uint8_t code = d[1];
-    if (wizCounts[wizStep][code] < 255) wizCounts[wizStep][code]++;
-    Serial.printf("  [wiz] %s press recorded: d[1]=0x%02X  (count=%u)\n",
-                  WIZ_NAMES[wizStep], code, wizCounts[wizStep][code]);
-    if (wizCounts[wizStep][code] >= 3) {
-      wizFinal[wizStep] = code;
-      wizHas  [wizStep] = true;
-      Serial.printf("  ✓ %s LOCKED as d[1]=0x%02X  →  action=\"%s\"\n",
-                    WIZ_NAMES[wizStep], code, WIZ_ACT[wizStep]);
-      wizStep++;
-      if (wizStep < 5) {
-        Serial.printf("\n>>> Now press %s button 3 times <<<\n", WIZ_NAMES[wizStep]);
-      } else {
-        Serial.println("\n╔════════════ WIZARD COMPLETE ════════════╗");
-        Serial.println(  "║  Paste this into handleRingReport():    ║");
-        Serial.println(  "╚═════════════════════════════════════════╝");
-        for (int i = 0; i < 5; i++) {
-          if (!wizHas[i]) { Serial.printf("  // %s — NOT captured\n", WIZ_NAMES[i]); continue; }
-          if (i == 0)
-            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringFireMiddle(false); return; }  // %s\n",
-                          wizFinal[i], WIZ_NAMES[i]);
-          else
-            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringAction(\"%s\"); return; }  // %s\n",
-                          wizFinal[i], WIZ_ACT[i], WIZ_NAMES[i]);
-        }
-        Serial.println("\n  Share this block with the AI to bake it into the firmware permanently.");
-        wizMode = false;
-      }
-    }
-    return;  // never trigger actions while wizard is active
-  }
+
 
   // Same for 0x0F 0xEF format air-mouse (some firmware versions)
   if (len >= 3 && d[0] == 0x0F && d[1] == 0xEF) {
@@ -1479,21 +1570,31 @@ void handleSerial() {
         }
       }
       else if (line.equalsIgnoreCase("wizard")) {
-        wizMode = true;
-        wizStep = 0;
+        wizMode        = true;
+        wizStep        = 0;
+        wizPressIdx    = 0;
+        wizPrevPressed = false;
+        wizLastEdgeAt  = 0;
         for (int i = 0; i < 5; i++) { wizHas[i] = false; wizFinal[i] = 0;
           for (int j = 0; j < 256; j++) wizCounts[i][j] = 0; }
+        wizLogReset("=== Smart Audio Tutor wizard log ===");
         Serial.println();
         Serial.println("╔══════════════════════════════════════════════╗");
-        Serial.println("║  GUIDED RING BUTTON WIZARD                   ║");
-        Serial.println("║  I will tell you which button to press.      ║");
-        Serial.println("║  Press it firmly 3 times. Wait for ✓ LOCKED. ║");
-        Serial.println("║  Gyro/motion is ignored automatically.       ║");
+        Serial.println("║  GUIDED RING BUTTON WIZARD v2                ║");
+        Serial.println("║  Press each button firmly 3 times.           ║");
+        Serial.println("║  ALL raw bytes per press are logged to       ║");
+        Serial.println("║    /wizlog.txt   (also at  /wizlog  on HTTP) ║");
+        Serial.println("║  Type 'wizshow' to dump, 'wizreset' to clear.║");
         Serial.println("╚══════════════════════════════════════════════╝");
         Serial.printf("\n>>> Press %s button 3 times <<<\n", WIZ_NAMES[0]);
       }
+      else if (line.equalsIgnoreCase("wizshow")) { wizDumpFile(); }
+      else if (line.equalsIgnoreCase("wizreset")) {
+        wizLogReset("=== cleared ===");
+        Serial.println("[wiz] /wizlog.txt cleared");
+      }
       else if (line.length() > 0) {
-        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip)\n",
+        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip wizard wizshow wizreset)\n",
                       line.c_str());
       }
       line = "";
@@ -1504,14 +1605,32 @@ void handleSerial() {
 }
 
 void loop() {
+  // ── Non-blocking WiFi reconnect — NEVER block BLE / serial / wizard ──
+  // (Old code blocked here for 20s on every retry, so the ring could not
+  //  pair and the wizard could not run while WiFi was down.)
+  static unsigned long lastWifiTry = 0;
+  static bool wifiBeginIssued = false;
   if (WiFi.status() != WL_CONNECTED) {
-    connectWifi();
-    if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
-    delay(500);
-    return;
+    if (millis() - lastWifiTry > 8000) {
+      lastWifiTry = millis();
+      Serial.printf("[wifi] retrying SSID=%s ...\n", WIFI_SSID);
+      WiFi.disconnect(true, true);
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      wifiBeginIssued = true;
+    }
+  } else if (wifiBeginIssued) {
+    wifiBeginIssued = false;
+    Serial.printf("[wifi] CONNECTED  IP=%s  RSSI=%d\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    startLocalDashboard();
   }
-  localServer.handleClient();
-  handleSerial();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    localServer.handleClient();
+    pollTrigger();
+  }
+  handleSerial();   // always — so 'wizard' / 'audit' / 'cam' work even with no WiFi
 
   if (pressed(CAPTURE_BTN, &capState,  &capT))  {
     Serial.println("[BTN] CAPTURE pressed");
@@ -1520,8 +1639,7 @@ void loop() {
   if (pressed(NEXT_BTN, &nextState, &nextT)) { Serial.println("[BTN] NEXT");  postCommand("next"); }
   if (pressed(PREV_BTN, &prevState, &prevT)) { Serial.println("[BTN] PREV");  postCommand("prev"); }
 
-  maintainRingBle();
-  pollTrigger();
+  maintainRingBle();   // always — pair the ring even with WiFi down
   idlePreFocus();
   delay(10);
 }

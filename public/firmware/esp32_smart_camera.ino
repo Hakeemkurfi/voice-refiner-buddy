@@ -135,7 +135,9 @@ static bool     cameraOn     = false;   // starts false; set to true after initC
 //  OV5640 AUTOFOCUS HELPER — v3.0
 // ============================================================
 bool ov5640TriggerAf(sensor_t* s, uint32_t timeoutMs) {
-  if (!s || !isOv5640 || !ov5640AfReady || !cameraOn) return false;
+  // v3.1: do NOT gate on ov5640AfReady — many OV5640 modules don't ACK the
+  // probe register but still focus correctly when commanded. Try anyway.
+  if (!s || !isOv5640 || !cameraOn) return false;
 
   // 1) Release VCM motor so lens returns to a neutral position.
   s->set_reg(s, 0x3022, 0xff, 0x08);

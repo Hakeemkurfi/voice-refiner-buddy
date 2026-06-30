@@ -963,30 +963,42 @@ void handleRingReport(uint8_t* d, size_t len) {
       for (size_t i = 0; i < len; i++) { char b[4]; snprintf(b, sizeof(b), "%02X ", d[i]); hex += b; }
       hex.trim();
 
-      // Press = transition from all-zero to non-zero (debounced 80 ms)
-      if (anyPressed && !wizPrevPressed && millis() - wizLastEdgeAt > 80) {
+      // For mouse-mode reports [btn,dx,dy,0x1F] only the BUTTON byte
+      // counts as "pressed" — motion bytes drift constantly.
+      bool pressedForWiz;
+      if (isMouseMode) {
+        pressedForWiz = (mouseBtn != 0);
+      } else {
+        pressedForWiz = anyPressed;
+      }
+
+      // Press = transition from not-pressed to pressed (debounced 80 ms)
+      if (pressedForWiz && !wizPrevPressed && millis() - wizLastEdgeAt > 80) {
         wizPressIdx++;
         wizLastEdgeAt = millis();
         wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " press #" + wizPressIdx + " edge");
-        // Lock d[1] code from the FIRST press of each button
-        if (len >= 2 && !wizHas[wizStep]) {
-          wizFinal[wizStep] = d[1];
+        // Lock signature from the FIRST press of each button.
+        // For mouse-mode use d[0] (button mask); otherwise d[1].
+        uint8_t sig = isMouseMode ? d[0] : (len >= 2 ? d[1] : 0);
+        if (!wizHas[wizStep]) {
+          wizFinal[wizStep] = sig;
           wizHas[wizStep]   = true;
         }
       }
-      if (!anyPressed && wizPrevPressed) {
+      if (!pressedForWiz && wizPrevPressed) {
         wizLastEdgeAt = millis();
         wizLog(String("[wiz] ") + WIZ_NAMES[wizStep] + " release");
       }
-      wizPrevPressed = anyPressed;
+      wizPrevPressed = pressedForWiz;
 
-      // Log every non-zero report in full (multi-byte buttons preserved)
-      if (anyPressed) {
+      // Log every report (mouse-mode logs only when btn pressed to cut noise)
+      if (pressedForWiz) {
         if (len >= 2 && wizCounts[wizStep][d[1]] < 255) wizCounts[wizStep][d[1]]++;
         wizLog(String("[wiz] ") + WIZ_NAMES[wizStep]
                + " step=" + wizStep + " press=" + wizPressIdx
                + " len=" + len + " bytes=" + hex);
       }
+
 
       // After 3 press edges advance
       if (wizPressIdx >= 3) {

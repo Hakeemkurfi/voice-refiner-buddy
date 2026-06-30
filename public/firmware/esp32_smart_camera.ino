@@ -452,11 +452,11 @@ void handleLocalStream() {
   client.printf("Content-Type: multipart/x-mixed-replace;boundary=%s\r\n", boundary);
   client.print("Cache-Control: no-store\r\nConnection: close\r\n\r\n");
 
-  previewSetSize(FRAMESIZE_SVGA);   // 800×600 ~10-15 fps
+  previewSetSize(FRAMESIZE_VGA);   // 640×480 — much faster live view
   unsigned long started = millis();
   while (client.connected() && millis() - started < 120000 && cameraOn) {
     camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) { delay(20); continue; }
+    if (!fb) { delay(10); continue; }
     if (!isCompleteJpeg(fb->buf, fb->len)) { esp_camera_fb_return(fb); continue; }
     client.printf("--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
                   boundary, (unsigned)fb->len);
@@ -468,9 +468,11 @@ void handleLocalStream() {
     }
     client.print("\r\n");
     esp_camera_fb_return(fb);
-    delay(1);
+    // no extra delay — let the next frame come ASAP
   }
-  previewSetSize(FRAMESIZE_QXGA);
+  // NOTE: do NOT re-set to QXGA here. The next /capture call sets QXGA
+  // itself, and re-setting it on every stream-close caused multi-second
+  // freezes after moving the camera.
   client.stop();
 }
 

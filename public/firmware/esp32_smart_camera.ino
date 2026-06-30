@@ -1504,14 +1504,32 @@ void handleSerial() {
 }
 
 void loop() {
+  // ── Non-blocking WiFi reconnect — NEVER block BLE / serial / wizard ──
+  // (Old code blocked here for 20s on every retry, so the ring could not
+  //  pair and the wizard could not run while WiFi was down.)
+  static unsigned long lastWifiTry = 0;
+  static bool wifiBeginIssued = false;
   if (WiFi.status() != WL_CONNECTED) {
-    connectWifi();
-    if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
-    delay(500);
-    return;
+    if (millis() - lastWifiTry > 8000) {
+      lastWifiTry = millis();
+      Serial.printf("[wifi] retrying SSID=%s ...\n", WIFI_SSID);
+      WiFi.disconnect(true, true);
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(WIFI_SSID, WIFI_PASS);
+      wifiBeginIssued = true;
+    }
+  } else if (wifiBeginIssued) {
+    wifiBeginIssued = false;
+    Serial.printf("[wifi] CONNECTED  IP=%s  RSSI=%d\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    startLocalDashboard();
   }
-  localServer.handleClient();
-  handleSerial();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    localServer.handleClient();
+    pollTrigger();
+  }
+  handleSerial();   // always — so 'wizard' / 'audit' / 'cam' work even with no WiFi
 
   if (pressed(CAPTURE_BTN, &capState,  &capT))  {
     Serial.println("[BTN] CAPTURE pressed");
@@ -1520,8 +1538,7 @@ void loop() {
   if (pressed(NEXT_BTN, &nextState, &nextT)) { Serial.println("[BTN] NEXT");  postCommand("next"); }
   if (pressed(PREV_BTN, &prevState, &prevT)) { Serial.println("[BTN] PREV");  postCommand("prev"); }
 
-  maintainRingBle();
-  pollTrigger();
+  maintainRingBle();   // always — pair the ring even with WiFi down
   idlePreFocus();
   delay(10);
 }

@@ -135,7 +135,9 @@ static bool     cameraOn     = false;   // starts false; set to true after initC
 //  OV5640 AUTOFOCUS HELPER — v3.0
 // ============================================================
 bool ov5640TriggerAf(sensor_t* s, uint32_t timeoutMs) {
-  if (!s || !isOv5640 || !ov5640AfReady || !cameraOn) return false;
+  // v3.1: do NOT gate on ov5640AfReady — many OV5640 modules don't ACK the
+  // probe register but still focus correctly when commanded. Try anyway.
+  if (!s || !isOv5640 || !cameraOn) return false;
 
   // 1) Release VCM motor so lens returns to a neutral position.
   s->set_reg(s, 0x3022, 0xff, 0x08);
@@ -262,6 +264,15 @@ bool initCamera() {
     s->set_reg(s, 0x5301, 0xff, 0x30);  // sharpen MT threshold 2
     s->set_reg(s, 0x5303, 0xff, 0x08);  // sharpen MT offset 1
     s->set_reg(s, 0x5304, 0xff, 0x16);  // sharpen MT offset 2
+
+    // ── Narrow the field of view (~1.3× center crop) for A4 framing ──
+    // OV5640 ISP windowing: shrink the active sensor window so the lens
+    // looks "less wide". X start 384, Y start 288, end at 2255/1679 →
+    // ~1872×1392 crop of the 2592×1944 array, rescaled back to QXGA.
+    s->set_reg(s, 0x3800, 0xff, 0x01); s->set_reg(s, 0x3801, 0xff, 0x80);
+    s->set_reg(s, 0x3802, 0xff, 0x01); s->set_reg(s, 0x3803, 0xff, 0x20);
+    s->set_reg(s, 0x3804, 0xff, 0x08); s->set_reg(s, 0x3805, 0xff, 0xCF);
+    s->set_reg(s, 0x3806, 0xff, 0x06); s->set_reg(s, 0x3807, 0xff, 0x8F);
 
     // ── Probe AF firmware ──
     delay(120);
@@ -441,11 +452,11 @@ void handleLocalStream() {
   client.printf("Content-Type: multipart/x-mixed-replace;boundary=%s\r\n", boundary);
   client.print("Cache-Control: no-store\r\nConnection: close\r\n\r\n");
 
-  previewSetSize(FRAMESIZE_SVGA);   // 800×600 ~10-15 fps
+  previewSetSize(FRAMESIZE_VGA);   // 640×480 — much faster live view
   unsigned long started = millis();
   while (client.connected() && millis() - started < 120000 && cameraOn) {
     camera_fb_t* fb = esp_camera_fb_get();
-    if (!fb) { delay(20); continue; }
+    if (!fb) { delay(10); continue; }
     if (!isCompleteJpeg(fb->buf, fb->len)) { esp_camera_fb_return(fb); continue; }
     client.printf("--%s\r\nContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n",
                   boundary, (unsigned)fb->len);
@@ -457,9 +468,11 @@ void handleLocalStream() {
     }
     client.print("\r\n");
     esp_camera_fb_return(fb);
-    delay(1);
+    // no extra delay — let the next frame come ASAP
   }
-  previewSetSize(FRAMESIZE_QXGA);
+  // NOTE: do NOT re-set to QXGA here. The next /capture call sets QXGA
+  // itself, and re-setting it on every stream-close caused multi-second
+  // freezes after moving the camera.
   client.stop();
 }
 
@@ -1204,13 +1217,18 @@ bool captureAndSend() {
 
   sensor_t* s = esp_camera_sensor_get();
 
+  // Restore QXGA in case the live preview left us in VGA
+  if (s) s->set_framesize(s, FRAMESIZE_QXGA);
+  // Flush stale frames from the previous resolution
+  for (int i = 0; i < 2; i++) { camera_fb_t* fb = esp_camera_fb_get(); if (fb) esp_camera_fb_return(fb); }
+
   // Stage A — Warmup + parallel AF
   Serial.println("[capture] Stage A — warmup + parallel AF");
   bool afStarted = false;
   for (int i = 0; i < 4; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
-    if (i == 1 && !afStarted && isOv5640 && ov5640AfReady) {
+    if (i == 1 && !afStarted && isOv5640) {  // drop ov5640AfReady gate
       s->set_reg(s, 0x3022, 0xff, 0x08);
       delay(20);
       s->set_reg(s, 0x3023, 0xff, 0x01);

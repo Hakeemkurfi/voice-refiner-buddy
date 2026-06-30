@@ -886,6 +886,41 @@ void handleRingReport(uint8_t* d, size_t len) {
     // Gyro stream — skip silently
     return;
   }
+
+  // ── Guided wizard: tally d[1] codes for the active button ────────────
+  if (wizMode && wizStep < 5 && len >= 2) {
+    uint8_t code = d[1];
+    if (wizCounts[wizStep][code] < 255) wizCounts[wizStep][code]++;
+    Serial.printf("  [wiz] %s press recorded: d[1]=0x%02X  (count=%u)\n",
+                  WIZ_NAMES[wizStep], code, wizCounts[wizStep][code]);
+    if (wizCounts[wizStep][code] >= 3) {
+      wizFinal[wizStep] = code;
+      wizHas  [wizStep] = true;
+      Serial.printf("  ✓ %s LOCKED as d[1]=0x%02X  →  action=\"%s\"\n",
+                    WIZ_NAMES[wizStep], code, WIZ_ACT[wizStep]);
+      wizStep++;
+      if (wizStep < 5) {
+        Serial.printf("\n>>> Now press %s button 3 times <<<\n", WIZ_NAMES[wizStep]);
+      } else {
+        Serial.println("\n╔════════════ WIZARD COMPLETE ════════════╗");
+        Serial.println(  "║  Paste this into handleRingReport():    ║");
+        Serial.println(  "╚═════════════════════════════════════════╝");
+        for (int i = 0; i < 5; i++) {
+          if (!wizHas[i]) { Serial.printf("  // %s — NOT captured\n", WIZ_NAMES[i]); continue; }
+          if (i == 0)
+            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringFireMiddle(false); return; }  // %s\n",
+                          wizFinal[i], WIZ_NAMES[i]);
+          else
+            Serial.printf("  if (len >= 2 && d[1] == 0x%02X) { ringAction(\"%s\"); return; }  // %s\n",
+                          wizFinal[i], WIZ_ACT[i], WIZ_NAMES[i]);
+        }
+        Serial.println("\n  Share this block with the AI to bake it into the firmware permanently.");
+        wizMode = false;
+      }
+    }
+    return;  // never trigger actions while wizard is active
+  }
+
   // Same for 0x0F 0xEF format air-mouse (some firmware versions)
   if (len >= 3 && d[0] == 0x0F && d[1] == 0xEF) {
     // Old vendor air-mouse format — only match known codes below

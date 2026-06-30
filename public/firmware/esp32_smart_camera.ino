@@ -1039,6 +1039,60 @@ void handleRingReport(uint8_t* d, size_t len) {
 
 
 
+  // ── IGNORE gyro/air-mouse streaming data ─────────────────────────────
+  if (len >= 3 && d[1] == 0xF4) {
+    return;
+  }
+
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║  MOUSE-MODE RING (your S10 ring, captured 2026-06-30)                ║
+  // ║  Report = [btn, dx, dy, 0x1F]                                        ║
+  // ║  - Any button bit  → MIDDLE (capture)                                ║
+  // ║  - Sustained -X    → prev   (LEFT)                                   ║
+  // ║  - Sustained +X    → next   (RIGHT)                                  ║
+  // ║  - Sustained +Y    → volume up (UP)                                  ║
+  // ║  - Sustained -Y    → volume down (DOWN)                              ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
+  if (isMouseMode) {
+    // Button click on the ring (any of L/R/M bits set) = MIDDLE action
+    static bool   mmPrevBtn   = false;
+    static uint32_t mmBtnDownAt = 0;
+    bool btnNow = (mouseBtn != 0);
+    if (btnNow && !mmPrevBtn) {
+      mmBtnDownAt = millis();
+      ringFireMiddle(false);          // press edge → capture / toggle
+    } else if (!btnNow && mmPrevBtn) {
+      ringFireMiddle(true);            // release → resolve short/long
+    }
+    mmPrevBtn = btnNow;
+
+    // Direction = accumulate signed X/Y until we cross a threshold, then
+    // fire one discrete action and reset. This turns the ring's continuous
+    // swipe into clean prev/next/vol±.
+    int8_t dx = (int8_t)d[1];
+    int8_t dy = (int8_t)d[2];
+    static int32_t accX = 0, accY = 0;
+    static uint32_t lastMoveAt = 0;
+    const int32_t THRESH = 60;          // tune: lower = more sensitive
+    const uint32_t COOLDOWN = 180;      // ms between direction fires
+
+    // Decay accumulator if user stopped moving (so drift doesn't add up)
+    if (millis() - lastMoveAt > 250) { accX = 0; accY = 0; }
+    if (dx != 0 || dy != 0) lastMoveAt = millis();
+
+    accX += dx;
+    accY += dy;
+
+    static uint32_t lastDirAt = 0;
+    if (millis() - lastDirAt > COOLDOWN) {
+      if (accX >  THRESH) { ringAction("next");   accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accX < -THRESH) { ringAction("prev");   accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accY < -THRESH) { ringAction("volup");  accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accY >  THRESH) { ringAction("voldn");  accX = 0; accY = 0; lastDirAt = millis(); return; }
+    }
+    return;   // handled — don't fall through to keyboard fallbacks
+  }
+
   // Same for 0x0F 0xEF format air-mouse (some firmware versions)
   if (len >= 3 && d[0] == 0x0F && d[1] == 0xEF) {
     // Old vendor air-mouse format — only match known codes below
@@ -1052,6 +1106,7 @@ void handleRingReport(uint8_t* d, size_t len) {
       default: return;  // ignore unknown vendor codes
     }
   }
+
 
   // ── Deduplicate rapid repeats ─────────────────────────────────────────
   uint32_t h = 0;

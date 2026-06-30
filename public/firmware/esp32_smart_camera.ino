@@ -1039,10 +1039,6 @@ void handleRingReport(uint8_t* d, size_t len) {
 
 
 
-  // ── IGNORE gyro/air-mouse streaming data ─────────────────────────────
-  if (len >= 3 && d[1] == 0xF4) {
-    return;
-  }
 
   // ╔══════════════════════════════════════════════════════════════════════╗
   // ║  MOUSE-MODE RING (your S10 ring, captured 2026-06-30)                ║

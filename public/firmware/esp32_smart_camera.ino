@@ -346,16 +346,23 @@ void toggleCamera() {
 
 void connectWifi() {
   WiFi.mode(WIFI_STA);
+  WiFi.setSleep(false);             // better association reliability
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("WiFi");
+  Serial.printf("WiFi connecting to \"%s\"", WIFI_SSID);
   unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
-    delay(400); Serial.print(".");
+  // Short non-blocking-ish wait so BLE/wizard can start even if AP is down.
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 8000) {
+    delay(300); Serial.print(".");
   }
-  if (WiFi.status() == WL_CONNECTED)
-    Serial.printf("\nIP: %s\n", WiFi.localIP().toString().c_str());
-  else
-    Serial.println("\nWiFi FAILED — will retry in loop()");
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n[wifi] OK  IP=%s  RSSI=%d dBm\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  } else {
+    wl_status_t s = WiFi.status();
+    Serial.printf("\n[wifi] not connected yet (status=%d). Will retry every 8s in loop().\n", (int)s);
+    Serial.println("[wifi] Reasons: wrong SSID/password, 5GHz-only AP (ESP32 needs 2.4GHz), or weak signal.");
+    Serial.println("[wifi] BLE ring + wizard will still work without WiFi.");
+  }
 }
 
 // ============================================================

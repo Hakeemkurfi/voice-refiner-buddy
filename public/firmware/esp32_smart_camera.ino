@@ -731,6 +731,18 @@ static BLEClient*           ringClient  = nullptr;
 static bool   ringConnected             = false;
 static bool   ringScanRunning           = false;
 static bool   calibrateMode            = false;
+
+// ── Guided calibration wizard ─────────────────────────────────────────
+// Type "wizard" in Serial Monitor.  It walks through each button, asks
+// you to press it 3 times, tallies the d[1] codes (ignoring gyro 0xF4
+// noise) and at the end prints a ready-to-paste mapping block.
+static bool   wizMode      = false;
+static int    wizStep      = 0;          // 0=middle 1=left 2=right 3=up 4=down 5=done
+static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT (◀)", "RIGHT (▶)", "UP (▲)", "DOWN (▼)" };
+static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "replay", "stop" };
+static uint8_t wizCounts[5][256];        // [step][d1] = press count
+static uint8_t wizFinal [5];             // recorded d[1] per step
+static bool    wizHas   [5];             // recorded flag
 static unsigned long lastBleScan        = 0;
 static unsigned long lastRingAction     = 0;
 static unsigned long lastRingConnectAttempt = 0;

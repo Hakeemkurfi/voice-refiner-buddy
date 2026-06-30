@@ -265,6 +265,15 @@ bool initCamera() {
     s->set_reg(s, 0x5303, 0xff, 0x08);  // sharpen MT offset 1
     s->set_reg(s, 0x5304, 0xff, 0x16);  // sharpen MT offset 2
 
+    // ── Narrow the field of view (~1.3× center crop) for A4 framing ──
+    // OV5640 ISP windowing: shrink the active sensor window so the lens
+    // looks "less wide". X start 384, Y start 288, end at 2255/1679 →
+    // ~1872×1392 crop of the 2592×1944 array, rescaled back to QXGA.
+    s->set_reg(s, 0x3800, 0xff, 0x01); s->set_reg(s, 0x3801, 0xff, 0x80);
+    s->set_reg(s, 0x3802, 0xff, 0x01); s->set_reg(s, 0x3803, 0xff, 0x20);
+    s->set_reg(s, 0x3804, 0xff, 0x08); s->set_reg(s, 0x3805, 0xff, 0xCF);
+    s->set_reg(s, 0x3806, 0xff, 0x06); s->set_reg(s, 0x3807, 0xff, 0x8F);
+
     // ── Probe AF firmware ──
     delay(120);
     s->set_reg(s, 0x3022, 0xff, 0x08);   // release motor

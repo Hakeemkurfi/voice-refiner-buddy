@@ -563,6 +563,13 @@ void startLocalDashboard() {
       String("<p>") + (ok ? "✓ Prev sent." : "✗ Prev failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
+  localServer.on("/wizlog", []() {
+    if (!LittleFS.begin(true)) { localServer.send(500, "text/plain", "FS mount failed"); return; }
+    File f = LittleFS.open("/wizlog.txt", FILE_READ);
+    if (!f) { localServer.send(404, "text/plain", "No /wizlog.txt yet — run 'wizard' in Serial Monitor"); return; }
+    localServer.streamFile(f, "text/plain");
+    f.close();
+  });
   localServer.begin();
   Serial.printf("Local dashboard: http://%s/\n", WiFi.localIP().toString().c_str());
 }

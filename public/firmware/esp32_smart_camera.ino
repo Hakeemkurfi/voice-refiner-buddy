@@ -1570,21 +1570,31 @@ void handleSerial() {
         }
       }
       else if (line.equalsIgnoreCase("wizard")) {
-        wizMode = true;
-        wizStep = 0;
+        wizMode        = true;
+        wizStep        = 0;
+        wizPressIdx    = 0;
+        wizPrevPressed = false;
+        wizLastEdgeAt  = 0;
         for (int i = 0; i < 5; i++) { wizHas[i] = false; wizFinal[i] = 0;
           for (int j = 0; j < 256; j++) wizCounts[i][j] = 0; }
+        wizLogReset("=== Smart Audio Tutor wizard log ===");
         Serial.println();
         Serial.println("╔══════════════════════════════════════════════╗");
-        Serial.println("║  GUIDED RING BUTTON WIZARD                   ║");
-        Serial.println("║  I will tell you which button to press.      ║");
-        Serial.println("║  Press it firmly 3 times. Wait for ✓ LOCKED. ║");
-        Serial.println("║  Gyro/motion is ignored automatically.       ║");
+        Serial.println("║  GUIDED RING BUTTON WIZARD v2                ║");
+        Serial.println("║  Press each button firmly 3 times.           ║");
+        Serial.println("║  ALL raw bytes per press are logged to       ║");
+        Serial.println("║    /wizlog.txt   (also at  /wizlog  on HTTP) ║");
+        Serial.println("║  Type 'wizshow' to dump, 'wizreset' to clear.║");
         Serial.println("╚══════════════════════════════════════════════╝");
         Serial.printf("\n>>> Press %s button 3 times <<<\n", WIZ_NAMES[0]);
       }
+      else if (line.equalsIgnoreCase("wizshow")) { wizDumpFile(); }
+      else if (line.equalsIgnoreCase("wizreset")) {
+        wizLogReset("=== cleared ===");
+        Serial.println("[wiz] /wizlog.txt cleared");
+      }
       else if (line.length() > 0) {
-        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip)\n",
+        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip wizard wizshow wizreset)\n",
                       line.c_str());
       }
       line = "";

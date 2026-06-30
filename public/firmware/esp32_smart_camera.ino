@@ -563,13 +563,22 @@ void startLocalDashboard() {
       String("<p>") + (ok ? "✓ Prev sent." : "✗ Prev failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
-  localServer.on("/wizlog", []() {
+  auto serveWizlog = [](bool asDownload){
     if (!LittleFS.begin(true)) { localServer.send(500, "text/plain", "FS mount failed"); return; }
     File f = LittleFS.open("/wizlog.txt", FILE_READ);
-    if (!f) { localServer.send(404, "text/plain", "No /wizlog.txt yet — run 'wizard' in Serial Monitor"); return; }
+    if (!f) { localServer.send(404, "text/plain", "No /wizlog.txt yet — run 'wizard' in Serial Monitor (then press each button 3x)"); return; }
+    if (asDownload) {
+      localServer.sendHeader("Content-Disposition", "attachment; filename=\"wizlog.txt\"");
+    }
     localServer.streamFile(f, "text/plain");
     f.close();
-  });
+  };
+  // View in browser:
+  localServer.on("/wizlog",        [serveWizlog](){ serveWizlog(false); });
+  localServer.on("/wizlog.txt",    [serveWizlog](){ serveWizlog(false); });
+  // Force download (right-click → Save As also works on /wizlog):
+  localServer.on("/wizlog/download", [serveWizlog](){ serveWizlog(true);  });
+  localServer.on("/download",        [serveWizlog](){ serveWizlog(true);  });
   localServer.begin();
   Serial.printf("Local dashboard: http://%s/\n", WiFi.localIP().toString().c_str());
 }
@@ -911,9 +920,11 @@ static void wizDumpFile() {
   if (!wizFsReady) { Serial.println("[wiz] no FS"); return; }
   File f = LittleFS.open("/wizlog.txt", FILE_READ);
   if (!f) { Serial.println("[wiz] /wizlog.txt not found yet — run 'wizard' first"); return; }
-  Serial.println("──── /wizlog.txt ────");
+  Serial.println();
+  Serial.println("=====BEGIN WIZLOG=====");      // <-- copy from this line ...
   while (f.available()) Serial.write(f.read());
-  Serial.println("\n──── end ────");
+  Serial.println();
+  Serial.println("=====END WIZLOG=====");        // <-- ... to this line, save as wizlog.txt
   f.close();
 }
 

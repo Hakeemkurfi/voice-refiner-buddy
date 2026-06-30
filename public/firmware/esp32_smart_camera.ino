@@ -920,9 +920,11 @@ static void wizDumpFile() {
   if (!wizFsReady) { Serial.println("[wiz] no FS"); return; }
   File f = LittleFS.open("/wizlog.txt", FILE_READ);
   if (!f) { Serial.println("[wiz] /wizlog.txt not found yet — run 'wizard' first"); return; }
-  Serial.println("──── /wizlog.txt ────");
+  Serial.println();
+  Serial.println("=====BEGIN WIZLOG=====");      // <-- copy from this line ...
   while (f.available()) Serial.write(f.read());
-  Serial.println("\n──── end ────");
+  Serial.println();
+  Serial.println("=====END WIZLOG=====");        // <-- ... to this line, save as wizlog.txt
   f.close();
 }
 

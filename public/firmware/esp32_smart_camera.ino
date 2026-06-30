@@ -49,6 +49,7 @@
 #include <BLEClient.h>
 #include <BLESecurity.h>
 #include <BLERemoteDescriptor.h>
+#include <LittleFS.h>
 #include <map>
 
 // ====== EDIT THESE ======

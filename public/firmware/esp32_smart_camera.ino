@@ -121,8 +121,8 @@ static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint
 
 static void applyOrientation(sensor_t* s) {
   if (!s) return;
-  s->set_hmirror(s, HMIRROR);
-  s->set_vflip(s, VFLIP);
+  s->set_hmirror(s, runtimeMirror ? 1 : 0);
+  s->set_vflip(s, runtimeFlip ? 1 : 0);
   delay(20);
 }
 

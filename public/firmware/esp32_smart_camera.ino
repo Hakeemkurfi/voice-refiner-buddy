@@ -1701,7 +1701,8 @@ void printAudit() {
   }
   Serial.printf("  Server             : https://%s%s\n", SERVER_HOST, SERVER_PATH);
   Serial.printf("  Camera             : %s\n", cameraOn ? "ON" : "OFF");
-  Serial.printf("  HMIRROR / VFLIP    : %d / %d\n", HMIRROR, VFLIP);
+  Serial.printf("  HMIRROR / VFLIP    : %d / %d (runtime %d / %d)\n",
+                HMIRROR, VFLIP, runtimeMirror ? 1 : 0, runtimeFlip ? 1 : 0);
   Serial.printf("  Rotate stream CSS  : %s\n", ROTATE_STREAM_CSS ? "YES" : "no");
   Serial.printf("  Sensor PID         : 0x%04x (%s)\n", sensorPid,
                 isOv5640 ? "OV5640 AF" :

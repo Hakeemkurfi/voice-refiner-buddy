@@ -1048,10 +1048,27 @@ void handleRingReport(uint8_t* d, size_t len) {
     return;
   }
 
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║  S10 RING MIDDLE-BUTTON SIGNATURE (captured from user log 2026-07-01) ║
+  // ║  Report shape:  [XX] F4 01 19   (4 bytes, d[1..3] fixed)              ║
+  // ║  This is the ACTUAL middle-press pattern this ring emits — it does    ║
+  // ║  not use the [btn,dx,dy,0x1F] mouse-mode format.  Handle it FIRST,    ║
+  // ║  before the generic gyro-ignore below, otherwise the press is eaten.  ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
+  if (len == 4 && d[1] == 0xF4 && d[2] == 0x01 && d[3] == 0x19) {
+    lastMiddlePatternAt = millis();
+    if (!ringMiddleHeld) {
+      Serial.println("[ring] MIDDLE press detected (F4 01 19)");
+      ringFireMiddle(false);   // press edge — timer starts for short/long
+    }
+    return;
+  }
+
   // ── IGNORE gyro/air-mouse streaming data ─────────────────────────────
   if (len >= 3 && d[1] == 0xF4) {
     return;
   }
+
 
 
 

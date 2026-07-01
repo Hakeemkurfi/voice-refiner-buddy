@@ -1,5 +1,5 @@
 /*
-  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.0
+  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.1
   ─────────────────────────────────────────────────────────────
   Board:            "ESP32S3 Dev Module"
   USB CDC On Boot:  "Enabled"
@@ -63,10 +63,11 @@ const char* DEVICE_ID     = "esp32-cam-01";
 // ========================
 
 // ====== IMAGE ORIENTATION ======
-// If your stream/capture appears rotated or mirrored, flip these:
+// If your stream/capture appears upside down, BOTH must be 1 for a true 180° fix.
+// Your latest sample is upside down, so v3.1 defaults to 180° rotation.
 //   0 = off, 1 = on
-#define HMIRROR  0   // horizontal mirror
-#define VFLIP    0   // vertical flip
+#define HMIRROR  1   // horizontal mirror
+#define VFLIP    1   // vertical flip
 // If the stream looks 90° rotated, set this to 1 — the dashboard page will
 // CSS-rotate the <img> by 90° so it looks upright on screen.
 #define ROTATE_STREAM_CSS 0
@@ -75,6 +76,7 @@ const char* DEVICE_ID     = "esp32-cam-01";
 // ====== PERFORMANCE TUNING ======
 #define UPLOAD_CHUNK_SIZE   4096
 #define IDLE_AF_INTERVAL_MS 8000
+#define HTTPS_CONNECT_RETRIES 3
 // ================================
 
 // ====== BURST CAPTURE ======

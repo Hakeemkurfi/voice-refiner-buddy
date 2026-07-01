@@ -1743,6 +1743,22 @@ void loop() {
   }
   handleSerial();   // always — so 'wizard' / 'audit' / 'cam' work even with no WiFi
 
+  // Synthesise middle-button RELEASE when the S10 stops sending F4 01 19.
+  // The ring never sends an all-zero frame on release, so we time it out here.
+  if (ringMiddleHeld && (millis() - lastMiddlePatternAt) > 180) {
+    Serial.println("[ring] MIDDLE release (pattern timeout)");
+    ringFireMiddle(true);   // resolves as capture (short) or camera_toggle (long)
+  }
+
+  // Periodic IP banner (every 15s while connected) — helps user find the
+  // dashboard URL without scrolling back through the serial log.
+  static unsigned long lastIpBannerAt = 0;
+  if (WiFi.status() == WL_CONNECTED && millis() - lastIpBannerAt > 15000) {
+    lastIpBannerAt = millis();
+    Serial.printf("[net] Dashboard: http://%s/    (RSSI %d dBm)\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  }
+
   if (pressed(CAPTURE_BTN, &capState,  &capT))  {
     Serial.println("[BTN] CAPTURE pressed");
     Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED");

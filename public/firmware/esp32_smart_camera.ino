@@ -622,13 +622,15 @@ bool postJpeg(uint8_t* buf, size_t len) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
 
   String path = String(SERVER_PATH) + "?type=capture";
   Serial.printf("POST https://%s%s  (%u bytes)\n",
                 SERVER_HOST, path.c_str(), (unsigned)len);
 
-  if (!client.connect(SERVER_HOST, 443)) {
-    Serial.println("  -> HTTPS connect failed");
+  if (!tlsConnectWithRetry(client, SERVER_HOST, 443, "jpeg")) {
+    Serial.printf("  -> HTTPS connect failed. App endpoint is online; this is the ESP32/hotspot TLS path. RSSI=%d dBm\n",
+                  WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
     return false;
   }
 
@@ -706,15 +708,14 @@ bool postCommand(const char* type) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
 
   String body = String("{\"type\":\"") + type + "\",\"device_id\":\"" + DEVICE_ID + "\"}";
   Serial.printf("POST %s -> https://%s%s\n", type, SERVER_HOST, SERVER_PATH);
 
-  if (!client.connect(SERVER_HOST, 443)) {
-    Serial.printf("POST %s -> HTTPS connect failed (WiFi=%s RSSI=%d). Check hotspot/mobile data.\n",
-                  type,
-                  WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
-                  WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  if (!tlsConnectWithRetry(client, SERVER_HOST, 443, type)) {
+    Serial.printf("POST %s -> HTTPS connect failed. App endpoint is online; try stronger hotspot signal or another WiFi.\n",
+                  type);
     client.stop();
     return false;
   }

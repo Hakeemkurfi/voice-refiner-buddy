@@ -273,10 +273,11 @@ bool initCamera() {
     // ── Exposure & gain ──
     s->set_exposure_ctrl(s, 1);    // AEC on
     s->set_aec2(s, 1);             // AEC2 on
-    s->set_ae_level(s, -1);        // reduce washed-out white paper
+    s->set_ae_level(s, -2);        // reduce washed-out white paper
+    s->set_aec_value(s, 560);      // good starting point for white pages
     s->set_gain_ctrl(s, 1);        // AGC on
     s->set_agc_gain(s, 0);         // start at minimum ISO
-    s->set_gainceiling(s, (gainceiling_t)2); // cap at 8× noise limit
+    s->set_gainceiling(s, (gainceiling_t)1); // cap noise for OCR
 
     // ── White balance ──
     // Fluorescent = stable on white paper under LED / tube / desk lamp
@@ -284,20 +285,8 @@ bool initCamera() {
     s->set_awb_gain(s, 1);
     s->set_wb_mode(s, 0);          // 0=auto; avoids purple/green paper casts
 
-    // ── Image quality — document-specific ──
-    s->set_brightness(s, 0);       // no boost: prevents washed-out notes
-    s->set_contrast(s, 2);         // black ink pops on white paper
-    s->set_saturation(s, -1);      // documents are mostly B&W
-    s->set_sharpness(s, 3);        // maximum hardware sharpening via API
-    s->set_denoise(s, 0);          // NO denoise — it blurs pencil lines
-    s->set_lenc(s, 1);             // lens shading correction
-    s->set_bpc(s, 1);              // bad-pixel correction
-    s->set_wpc(s, 1);              // white-pixel correction
-    s->set_raw_gma(s, 1);          // raw gamma
-
-    // ── Orientation ──
-    s->set_hmirror(s, HMIRROR);
-    s->set_vflip(s, VFLIP);
+    // ── Image quality + orientation — document-specific ──
+    applyDocumentTuning(s);
     s->set_colorbar(s, 0);
     s->set_special_effect(s, 0);
 
@@ -339,22 +328,12 @@ bool initCamera() {
     s->set_wb_mode(s, 0);          // auto white balance for mixed room light
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 0);
-    s->set_ae_level(s, -1);
+    s->set_ae_level(s, -2);
     s->set_aec_value(s, 550);
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
     s->set_gainceiling(s, (gainceiling_t)1);
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 2);
-    s->set_saturation(s, -1);
-    s->set_sharpness(s, 3);
-    s->set_denoise(s, 0);
-    s->set_lenc(s, 1);
-    s->set_bpc(s, 1);
-    s->set_wpc(s, 1);
-    s->set_raw_gma(s, 1);
-    s->set_hmirror(s, HMIRROR);
-    s->set_vflip(s, VFLIP);
+    applyDocumentTuning(s);
     s->set_colorbar(s, 0);
     s->set_special_effect(s, 0);
     // OV3660 extra sharpness registers

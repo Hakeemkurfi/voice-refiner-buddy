@@ -1529,9 +1529,11 @@ bool captureAndSend() {
   for (int i = 0; i < 4; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
-    if (i == 1 && !afStarted && isOv5640) {  // drop ov5640AfReady gate
+    if (i == 1 && !afStarted && isOv5640 && s) {  // drop ov5640AfReady gate
+      s->set_reg(s, 0x3022, 0xff, 0x01);
+      delay(10);
       s->set_reg(s, 0x3022, 0xff, 0x08);
-      delay(20);
+      delay(40);
       s->set_reg(s, 0x3023, 0xff, 0x01);
       s->set_reg(s, 0x3022, 0xff, 0x03);
       afStarted = true;

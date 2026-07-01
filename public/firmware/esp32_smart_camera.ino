@@ -758,6 +758,7 @@ bool checkServer() {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(20000);
@@ -1414,8 +1415,9 @@ bool postBurstFrame(const char* burstId, int seq, uint8_t* buf, size_t len) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
   String path = String(SERVER_PATH) + "?burst=" + burstId + "&seq=" + String(seq);
-  if (!client.connect(SERVER_HOST, 443)) {
+  if (!tlsConnectWithRetry(client, SERVER_HOST, 443, "burst")) {
     Serial.printf("  [burst %d] HTTPS connect failed\n", seq);
     return false;
   }
@@ -1449,6 +1451,7 @@ bool postBurstFinalize(const char* burstId) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(20000);

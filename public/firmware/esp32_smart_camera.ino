@@ -19,18 +19,18 @@
   2. Fixed image rotation / crop:
        · Added hmirror/vflip tuning constants you can flip at the top
        · Dashboard stream CSS-rotated 90° if ROTATE_STREAM is set
-  3. Sharpness improvements:
-       · OV5640 sharpness register 0x530A set to 0x08 (max hardware edge)
-       · ae_level → +1 for better visibility in typical indoor light
-       · Denoise still 0 (preserves pencil lines)
-       · quality 7 → 6 for better edge retention in JPEG
+  3. Document sharpness improvements:
+       · OV5640 autofocus sequence follows Espressif AF command order
+       · lower exposure/brightness to avoid washed-out paper
+       · Denoise still 0 (preserves pencil/ink strokes)
+       · JPEG quality 4 for better OCR edge retention
   4. Clean ring button mapping (calibrated):
-       · ▲ Up        → replay
-       · ▼ Down      → stop
+       · ▲ Up        → stop speech
+       · ▼ Down      → camera ON/OFF toggle
        · ◀ Left      → prev
        · ▶ Right     → next
        · Middle short (≤800 ms) → capture
-       · Middle long  (>800 ms) → camera_toggle (ON/OFF)
+       · Middle long  (>800 ms) → camera_toggle (backup)
   5. BLE auto-reconnect improvement:
        · Bond info preserved across reboots (NVS)
        · Disconnect → immediately start rescan (no 8 s penalty on first miss)
@@ -140,22 +140,25 @@ bool ov5640TriggerAf(sensor_t* s, uint32_t timeoutMs) {
   // probe register but still focus correctly when commanded. Try anyway.
   if (!s || !isOv5640 || !cameraOn) return false;
 
-  // 1) Release VCM motor so lens returns to a neutral position.
+  // OV5640 AF command order follows Espressif's AF implementation:
+  // main=0x01, release=0x08, wait ACK clear, ack=0x01, main=0x03 single focus.
+  s->set_reg(s, 0x3022, 0xff, 0x01);
+  delay(10);
   s->set_reg(s, 0x3022, 0xff, 0x08);
-  delay(30);
+  delay(40);
 
-  // 2) Wait for any previous command to clear.
+  // Wait for any previous command to clear.
   unsigned long t0 = millis();
   while (millis() - t0 < 150) {
     if (s->get_reg(s, 0x3023, 0xff) == 0) break;
     delay(10);
   }
 
-  // 3) Trigger single-shot autofocus.
+  // Trigger single-shot autofocus.
   s->set_reg(s, 0x3023, 0xff, 0x01);  // mark ACK busy
   s->set_reg(s, 0x3022, 0xff, 0x03);  // SINGLE FOCUS
 
-  // 4) Poll until focused or timeout.
+  // Poll until focused or timeout.
   t0 = millis();
   while (millis() - t0 < timeoutMs) {
     int ack = s->get_reg(s, 0x3023, 0xff);
@@ -199,7 +202,7 @@ bool initCamera() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 6;
+  config.jpeg_quality = 4;
   config.fb_count     = 2;
 
   esp_err_t err = esp_camera_init(&config);
@@ -223,13 +226,13 @@ bool initCamera() {
     // QXGA = 2048×1536. Best for document OCR while fitting PSRAM.
     s->set_framesize(s, FRAMESIZE_QXGA);
 
-    // ── JPEG quality 6: slightly sharper JPEG compression vs 7 ──
-    s->set_quality(s, 6);
+    // ── JPEG quality 4: larger file, better OCR edge retention ──
+    s->set_quality(s, 4);
 
     // ── Exposure & gain ──
     s->set_exposure_ctrl(s, 1);    // AEC on
     s->set_aec2(s, 1);             // AEC2 on
-    s->set_ae_level(s, 1);         // +1 exposure boost — helps under desk lamps
+    s->set_ae_level(s, -1);        // reduce washed-out white paper
     s->set_gain_ctrl(s, 1);        // AGC on
     s->set_agc_gain(s, 0);         // start at minimum ISO
     s->set_gainceiling(s, (gainceiling_t)2); // cap at 8× noise limit
@@ -238,12 +241,12 @@ bool initCamera() {
     // Fluorescent = stable on white paper under LED / tube / desk lamp
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 2);          // 0=auto 1=sunny 2=fluorescent 3=incandescent 4=flash
+    s->set_wb_mode(s, 0);          // 0=auto; avoids purple/green paper casts
 
     // ── Image quality — document-specific ──
-    s->set_brightness(s, 1);       // slight brightness boost for dim rooms
+    s->set_brightness(s, 0);       // no boost: prevents washed-out notes
     s->set_contrast(s, 2);         // black ink pops on white paper
-    s->set_saturation(s, 0);       // neutral (documents are mostly B&W)
+    s->set_saturation(s, -1);      // documents are mostly B&W
     s->set_sharpness(s, 3);        // maximum hardware sharpening via API
     s->set_denoise(s, 0);          // NO denoise — it blurs pencil lines
     s->set_lenc(s, 1);             // lens shading correction
@@ -289,18 +292,18 @@ bool initCamera() {
   } else {
     // ── OV3660 (fixed-focus, 3 MP) ──
     s->set_framesize(s, FRAMESIZE_QXGA);
-    s->set_quality(s, 6);
+    s->set_quality(s, 4);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 3);          // incandescent works well indoors
+    s->set_wb_mode(s, 0);          // auto white balance for mixed room light
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 0);
-    s->set_ae_level(s, 1);
-    s->set_aec_value(s, 700);
+    s->set_ae_level(s, -1);
+    s->set_aec_value(s, 550);
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
     s->set_gainceiling(s, (gainceiling_t)1);
-    s->set_brightness(s, 1);
+    s->set_brightness(s, 0);
     s->set_contrast(s, 2);
     s->set_saturation(s, -1);
     s->set_sharpness(s, 3);
@@ -378,7 +381,7 @@ void handleLocalRoot() {
   page += "<title>ESP32 Smart Audio Tutor v3</title>";
   page += "<body style='font-family:Arial,sans-serif;margin:20px;line-height:1.6;background:#111;color:#eee'>";
   page += "<h2 style='color:#4af'>ESP32 Smart Audio Tutor v3</h2>";
-  page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame.</p>";
+  page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame, use bright even light.</p>";
 
   // Camera status indicator
   page += "<p id='camstatus' style='font-weight:bold;color:";
@@ -419,13 +422,21 @@ void handleLocalRoot() {
   page += "<p style='margin:0 0 8px;font-weight:bold;color:#4af'>🔵 S10 Ring Button Map (v3)</p>";
   page += "<table style='width:100%;border-collapse:collapse;font-size:14px'>";
   page += "<tr style='color:#888'><th style='text-align:left;padding:4px'>Button</th><th style='text-align:left;padding:4px'>Action</th></tr>";
-  page += "<tr><td style='padding:4px'>▲ Up</td><td>🔁 Replay</td></tr>";
-  page += "<tr><td style='padding:4px'>▼ Down</td><td>⏹ Stop speech</td></tr>";
+  page += "<tr><td style='padding:4px'>▲ Up</td><td>⏹ Stop speech</td></tr>";
+  page += "<tr><td style='padding:4px'>▼ Down</td><td>🔴/🟢 Camera ON/OFF</td></tr>";
   page += "<tr><td style='padding:4px'>◀ Left</td><td>⏮ Previous step</td></tr>";
   page += "<tr><td style='padding:4px'>▶ Right</td><td>⏭ Next step</td></tr>";
   page += "<tr><td style='padding:4px'>⏸ Middle (short &lt;0.8s)</td><td>📸 Capture photo</td></tr>";
-  page += "<tr><td style='padding:4px'>⏸ Middle (hold &gt;0.8s)</td><td>🔴/🟢 Camera ON/OFF</td></tr>";
+  page += "<tr><td style='padding:4px'>⏸ Middle (hold &gt;0.8s)</td><td>🔴/🟢 Camera ON/OFF backup</td></tr>";
   page += "</table></div>";
+
+  page += "<div style='background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:12px;max-width:640px;margin-top:12px'>";
+  page += "<p style='margin:0 0 8px;font-weight:bold;color:#4af'>Capture checklist</p>";
+  page += "<ol style='margin:0 0 0 20px;color:#ddd'>";
+  page += "<li>Open this page first and frame the text until letters look sharp.</li>";
+  page += "<li>Use bright even light; avoid the phone/camera shadow on the page.</li>";
+  page += "<li>Hold still for one second, then press middle to capture.</li>";
+  page += "</ol></div>";
 
   page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
@@ -665,22 +676,59 @@ bool postJpeg(uint8_t* buf, size_t len) {
 }
 
 bool postCommand(const char* type) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.printf("POST %s skipped -> WiFi DOWN (status=%d). Ring/BLE still works; app command needs WiFi.\n",
+                  type, (int)WiFi.status());
+    return false;
+  }
+
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
-  HTTPClient http;
-  http.setReuse(false);
-  http.setTimeout(20000);
-  String url = String("https://") + SERVER_HOST + SERVER_PATH;
-  if (!http.begin(client, url)) { Serial.println("http.begin failed"); return false; }
-  http.addHeader("Content-Type", "application/json");
-  if (strlen(DEVICE_SECRET) > 0) http.addHeader("X-Device-Secret", DEVICE_SECRET);
-  http.addHeader("X-Device-Id", DEVICE_ID);
+
   String body = String("{\"type\":\"") + type + "\",\"device_id\":\"" + DEVICE_ID + "\"}";
-  int code = http.POST(body);
-  String resp = (code > 0) ? http.getString() : http.errorToString(code);
-  Serial.printf("POST %s -> HTTP %d  %s\n", type, code, resp.c_str());
-  http.end();
+  Serial.printf("POST %s -> https://%s%s\n", type, SERVER_HOST, SERVER_PATH);
+
+  if (!client.connect(SERVER_HOST, 443)) {
+    Serial.printf("POST %s -> HTTPS connect failed (WiFi=%s RSSI=%d). Check hotspot/mobile data.\n",
+                  type,
+                  WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
+                  WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+    client.stop();
+    return false;
+  }
+
+  client.printf("POST %s HTTP/1.1\r\n", SERVER_PATH);
+  client.printf("Host: %s\r\n", SERVER_HOST);
+  client.print("User-Agent: ESP32-S3-CAM-Smart-Audio-Tutor-v3\r\n");
+  client.print("Connection: close\r\n");
+  client.print("Content-Type: application/json\r\n");
+  client.printf("Content-Length: %u\r\n", (unsigned)body.length());
+  client.printf("X-Device-Id: %s\r\n", DEVICE_ID);
+  if (strlen(DEVICE_SECRET) > 0) client.printf("X-Device-Secret: %s\r\n", DEVICE_SECRET);
+  client.print("\r\n");
+  client.print(body);
+  client.flush();
+
+  String resp;
+  unsigned long deadline = millis() + 12000;
+  while (millis() < deadline && (client.connected() || client.available())) {
+    while (client.available()) {
+      char c = (char)client.read();
+      if (resp.length() < 1200) resp += c;
+      deadline = millis() + 1200;
+    }
+    delay(10);
+  }
+  client.stop();
+
+  int code = -1;
+  int firstSpace = resp.indexOf(' ');
+  if (firstSpace > 0 && resp.startsWith("HTTP/")) code = resp.substring(firstSpace + 1, firstSpace + 4).toInt();
+  int bodyAt = resp.indexOf("\r\n\r\n");
+  String respBody = bodyAt >= 0 ? resp.substring(bodyAt + 4) : resp;
+  respBody.replace("\n", " "); respBody.replace("\r", " ");
+  Serial.printf("POST %s -> HTTP %d  %s\n", type, code, respBody.c_str());
   return code >= 200 && code < 300;
 }
 
@@ -766,7 +814,7 @@ static bool   calibrateMode            = false;
 static bool   wizMode      = false;
 static int    wizStep      = 0;          // 0=middle 1=left 2=right 3=up 4=down 5=done
 static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT", "RIGHT", "UP", "DOWN" };
-static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "replay", "stop" };
+static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "stop", "camera_toggle" };
 static uint8_t wizCounts[5][256];        // [step][d1] = report count (legacy)
 static uint8_t wizFinal [5];             // recorded d[1] per step
 static bool    wizHas   [5];             // recorded flag
@@ -836,6 +884,8 @@ void ringAction(const char* action) {
   else if (!strcmp(action, "prev"))          postCommand("prev");
   else if (!strcmp(action, "replay"))        postCommand("replay");
   else if (!strcmp(action, "stop"))          postCommand("stop");
+  else if (!strcmp(action, "up_stop"))       postCommand("stop");
+  else if (!strcmp(action, "down_cam"))      toggleCamera();
 }
 
 void printRingStatus() {
@@ -852,12 +902,12 @@ void printRingStatus() {
   Serial.println();
   Serial.println("  Button Map (v3):");
   Serial.println("  ┌────────────────────────────────────────┐");
-  Serial.println("  │  [▲ Up]        → REPLAY step           │");
-  Serial.println("  │  [▼ Down]      → STOP / pause speech   │");
+  Serial.println("  │  [▲ Up]        → STOP / pause speech   │");
+  Serial.println("  │  [▼ Down]      → CAMERA ON / OFF       │");
   Serial.println("  │  [◀ Left]      → PREV step             │");
   Serial.println("  │  [▶ Right]     → NEXT step             │");
   Serial.println("  │  [⏸ Mid SHORT] → CAPTURE photo         │");
-  Serial.println("  │  [⏸ Mid LONG ] → CAMERA ON / OFF       │");
+  Serial.println("  │  [⏸ Mid LONG ] → CAMERA ON / OFF backup│");
   Serial.println("  └────────────────────────────────────────┘");
   Serial.println("────────────────────────────────────");
 }
@@ -1083,10 +1133,14 @@ void handleRingReport(uint8_t* d, size_t len) {
   // ║  - Sustained -Y    → volume down (DOWN)                              ║
   // ╚══════════════════════════════════════════════════════════════════════╝
   if (isMouseMode) {
-    // Button click on the ring (any of L/R/M bits set) = MIDDLE action
+    // Button click on the ring (any of L/R/M bits set) = MIDDLE action.
+    // Ignore 0x07 while motion is also present; that is often swipe noise.
     static bool   mmPrevBtn   = false;
     static uint32_t mmBtnDownAt = 0;
-    bool btnNow = (mouseBtn != 0);
+    int8_t dx = (int8_t)d[1];
+    int8_t dy = (int8_t)d[2];
+    bool moving = abs((int)dx) > 12 || abs((int)dy) > 12;
+    bool btnNow = (mouseBtn != 0 && !moving);
     if (btnNow && !mmPrevBtn) {
       mmBtnDownAt = millis();
       ringFireMiddle(false);          // press edge → capture / toggle
@@ -1098,8 +1152,6 @@ void handleRingReport(uint8_t* d, size_t len) {
     // Direction = accumulate signed X/Y until we cross a threshold, then
     // fire one discrete action and reset. This turns the ring's continuous
     // swipe into clean prev/next/vol±.
-    int8_t dx = (int8_t)d[1];
-    int8_t dy = (int8_t)d[2];
     static int32_t accX = 0, accY = 0;
     static uint32_t lastMoveAt = 0;
     const int32_t THRESH = 60;          // tune: lower = more sensitive
@@ -1114,10 +1166,10 @@ void handleRingReport(uint8_t* d, size_t len) {
 
     static uint32_t lastDirAt = 0;
     if (millis() - lastDirAt > COOLDOWN) {
-      if (accX >  THRESH) { ringAction("next");   accX = 0; accY = 0; lastDirAt = millis(); return; }
-      if (accX < -THRESH) { ringAction("prev");   accX = 0; accY = 0; lastDirAt = millis(); return; }
-      if (accY < -THRESH) { ringAction("volup");  accX = 0; accY = 0; lastDirAt = millis(); return; }
-      if (accY >  THRESH) { ringAction("voldn");  accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accX >  THRESH) { ringAction("next");          accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accX < -THRESH) { ringAction("prev");          accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accY < -THRESH) { ringAction("stop");          accX = 0; accY = 0; lastDirAt = millis(); return; }
+      if (accY >  THRESH) { ringAction("camera_toggle"); accX = 0; accY = 0; lastDirAt = millis(); return; }
     }
     return;   // handled — don't fall through to keyboard fallbacks
   }
@@ -1128,10 +1180,10 @@ void handleRingReport(uint8_t* d, size_t len) {
     uint16_t tail = (uint16_t(d[2]) << 8) | d[3];
     switch (tail) {
       case 0x0137: ringFireMiddle(false); return;
-      case 0x8116: ringAction("next");    return;
-      case 0x4115: ringAction("prev");    return;
-      case 0x0114: ringAction("replay");  return;
-      case 0x0119: ringAction("stop");    return;
+      case 0x8116: ringAction("next");          return;
+      case 0x4115: ringAction("prev");          return;
+      case 0x0114: ringAction("stop");          return;
+      case 0x0119: ringAction("camera_toggle"); return;
       default: return;  // ignore unknown vendor codes
     }
   }
@@ -1165,8 +1217,8 @@ void handleRingReport(uint8_t* d, size_t len) {
         case 0x2C:            ringFireMiddle(false); return;  // Space  = middle (if at d[2])
         case 0x4F:            ringAction("next");    return;  // →
         case 0x50:            ringAction("prev");    return;  // ←
-        case 0x51:            ringAction("stop");    return;  // ↓
-        case 0x52:            ringAction("replay");  return;  // ↑
+        case 0x51:            ringAction("camera_toggle"); return;  // ↓
+        case 0x52:            ringAction("stop");          return;  // ↑
       }
     }
   }
@@ -1178,8 +1230,8 @@ void handleRingReport(uint8_t* d, size_t len) {
       case 0x00CD: case 0x0001: ringFireMiddle(false); return;  // MediaPlayPause → middle
       case 0x00B5: case 0x0080: ringAction("next");    return;
       case 0x00B6: case 0x0040: ringAction("prev");    return;
-      case 0x00E9: case 0x0010: ringAction("replay");  return;
-      case 0x00EA: case 0x0020: ringAction("stop");    return;
+      case 0x00E9: case 0x0010: ringAction("stop");          return;
+      case 0x00EA: case 0x0020: ringAction("camera_toggle"); return;
     }
   }
 
@@ -1477,9 +1529,11 @@ bool captureAndSend() {
   for (int i = 0; i < 4; i++) {
     camera_fb_t* warm = esp_camera_fb_get();
     if (warm) esp_camera_fb_return(warm);
-    if (i == 1 && !afStarted && isOv5640) {  // drop ov5640AfReady gate
+    if (i == 1 && !afStarted && isOv5640 && s) {  // drop ov5640AfReady gate
+      s->set_reg(s, 0x3022, 0xff, 0x01);
+      delay(10);
       s->set_reg(s, 0x3022, 0xff, 0x08);
-      delay(20);
+      delay(40);
       s->set_reg(s, 0x3023, 0xff, 0x01);
       s->set_reg(s, 0x3022, 0xff, 0x03);
       afStarted = true;

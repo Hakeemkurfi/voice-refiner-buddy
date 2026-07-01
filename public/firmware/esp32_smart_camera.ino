@@ -101,6 +101,45 @@ const char* RING_NAME_HINT = "S10";
 
 WebServer localServer(80);
 
+static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint16_t port, const char* label) {
+  for (int attempt = 1; attempt <= HTTPS_CONNECT_RETRIES; attempt++) {
+    client.stop();
+    delay(80 * attempt);
+    Serial.printf("  [tls] %s connect attempt %d/%d to %s:%u\n",
+                  label, attempt, HTTPS_CONNECT_RETRIES, host, port);
+    if (client.connect(host, port)) return true;
+    if (WiFi.status() != WL_CONNECTED) break;
+    delay(250 * attempt);
+  }
+  Serial.printf("  [tls] %s connect failed after %d tries (WiFi=%s RSSI=%d).\n",
+                label,
+                HTTPS_CONNECT_RETRIES,
+                WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
+                WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  return false;
+}
+
+static void applyOrientation(sensor_t* s) {
+  if (!s) return;
+  s->set_hmirror(s, HMIRROR);
+  s->set_vflip(s, VFLIP);
+  delay(20);
+}
+
+static void applyDocumentTuning(sensor_t* s) {
+  if (!s) return;
+  s->set_brightness(s, -1);      // lower white-paper washout
+  s->set_contrast(s, 2);         // black text stronger
+  s->set_saturation(s, -2);      // documents are not color-critical
+  s->set_sharpness(s, 3);        // maximum API sharpening
+  s->set_denoise(s, 0);          // denoise smears pencil/ink strokes
+  s->set_lenc(s, 1);
+  s->set_bpc(s, 1);
+  s->set_wpc(s, 1);
+  s->set_raw_gma(s, 1);
+  applyOrientation(s);
+}
+
 // ─── Forward declarations ───
 bool postCommand(const char* type);
 bool checkServer();

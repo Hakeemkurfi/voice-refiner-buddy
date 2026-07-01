@@ -1682,10 +1682,10 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   initRingBle();
   Serial.println("Ready. Serial commands:");
-  Serial.println("  ping cap burst next prev ring af audit calibrate cam flip");
+  Serial.println("  ping cap burst next prev ring af audit calibrate cam flip rot");
   Serial.println("TIP: type 'calibrate' to safely identify S10 buttons.");
   Serial.println("TIP: type 'cam' to toggle camera ON/OFF (heat management).");
-  Serial.println("TIP: type 'flip' to toggle hmirror on/off at runtime.");
+  Serial.println("TIP: type 'rot' to toggle 180° rotation at runtime if preview is upside down.");
 }
 
 void printAudit() {

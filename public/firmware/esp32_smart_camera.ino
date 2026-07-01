@@ -104,6 +104,12 @@ static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
 static bool runtimeFlip   = VFLIP;
 
 static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint16_t port, const char* label) {
+  IPAddress ip;
+  if (WiFi.hostByName(host, ip)) {
+    Serial.printf("  [dns] %s -> %s\n", host, ip.toString().c_str());
+  } else {
+    Serial.printf("  [dns] FAILED for %s\n", host);
+  }
   for (int attempt = 1; attempt <= HTTPS_CONNECT_RETRIES; attempt++) {
     client.stop();
     delay(80 * attempt);

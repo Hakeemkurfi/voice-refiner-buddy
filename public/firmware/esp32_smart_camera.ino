@@ -871,6 +871,10 @@ static unsigned long lastRingHashAt = 0;
 // press and an all-zero report on release.
 static bool ringMiddleHeld = false;
 static unsigned long ringMiddleHeldAt = 0;
+// Refreshed every time we see the S10 middle-button signature report
+// (?? F4 01 19). loop() uses this to synthesise a release edge when the
+// pattern stops arriving, because the ring never sends an all-zero release.
+volatile unsigned long lastMiddlePatternAt = 0;
 
 void ringFireMiddle(bool isRelease) {
   if (!isRelease) {
@@ -1044,10 +1048,27 @@ void handleRingReport(uint8_t* d, size_t len) {
     return;
   }
 
+  // ╔══════════════════════════════════════════════════════════════════════╗
+  // ║  S10 RING MIDDLE-BUTTON SIGNATURE (captured from user log 2026-07-01) ║
+  // ║  Report shape:  [XX] F4 01 19   (4 bytes, d[1..3] fixed)              ║
+  // ║  This is the ACTUAL middle-press pattern this ring emits — it does    ║
+  // ║  not use the [btn,dx,dy,0x1F] mouse-mode format.  Handle it FIRST,    ║
+  // ║  before the generic gyro-ignore below, otherwise the press is eaten.  ║
+  // ╚══════════════════════════════════════════════════════════════════════╝
+  if (len == 4 && d[1] == 0xF4 && d[2] == 0x01 && d[3] == 0x19) {
+    lastMiddlePatternAt = millis();
+    if (!ringMiddleHeld) {
+      Serial.println("[ring] MIDDLE press detected (F4 01 19)");
+      ringFireMiddle(false);   // press edge — timer starts for short/long
+    }
+    return;
+  }
+
   // ── IGNORE gyro/air-mouse streaming data ─────────────────────────────
   if (len >= 3 && d[1] == 0xF4) {
     return;
   }
+
 
 
 
@@ -1721,6 +1742,22 @@ void loop() {
     pollTrigger();
   }
   handleSerial();   // always — so 'wizard' / 'audit' / 'cam' work even with no WiFi
+
+  // Synthesise middle-button RELEASE when the S10 stops sending F4 01 19.
+  // The ring never sends an all-zero frame on release, so we time it out here.
+  if (ringMiddleHeld && (millis() - lastMiddlePatternAt) > 180) {
+    Serial.println("[ring] MIDDLE release (pattern timeout)");
+    ringFireMiddle(true);   // resolves as capture (short) or camera_toggle (long)
+  }
+
+  // Periodic IP banner (every 15s while connected) — helps user find the
+  // dashboard URL without scrolling back through the serial log.
+  static unsigned long lastIpBannerAt = 0;
+  if (WiFi.status() == WL_CONNECTED && millis() - lastIpBannerAt > 15000) {
+    lastIpBannerAt = millis();
+    Serial.printf("[net] Dashboard: http://%s/    (RSSI %d dBm)\n",
+                  WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  }
 
   if (pressed(CAPTURE_BTN, &capState,  &capT))  {
     Serial.println("[BTN] CAPTURE pressed");

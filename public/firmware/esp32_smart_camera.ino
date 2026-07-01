@@ -519,6 +519,7 @@ void handleLocalStream() {
 void handleLocalJpg() {
   if (!cameraOn) { localServer.send(503, "text/plain", "Camera is OFF."); return; }
   sensor_t* s = esp_camera_sensor_get();
+  applyOrientation(s);
   ov5640TriggerAf(s, 900);
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }
@@ -1542,6 +1543,7 @@ bool captureAndSend() {
   lastIdleAf = millis();
 
   sensor_t* s = esp_camera_sensor_get();
+  applyOrientation(s);
 
   // Restore QXGA in case the live preview left us in VGA
   if (s) s->set_framesize(s, FRAMESIZE_QXGA);

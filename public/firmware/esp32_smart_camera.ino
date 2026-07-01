@@ -280,8 +280,8 @@ bool initCamera() {
 
   if (isOv5640) {
     // ── Resolution ──
-    // QXGA = 2048×1536. Best for document OCR while fitting PSRAM.
-    s->set_framesize(s, FRAMESIZE_QXGA);
+    // QSXGA = 2560×1920. Use the full OV5640 sensor for document OCR.
+    s->set_framesize(s, FRAMESIZE_QSXGA);
 
     // ── JPEG quality 4: larger file, better OCR edge retention ──
     s->set_quality(s, 4);
@@ -318,7 +318,7 @@ bool initCamera() {
     // ── Narrow the field of view (~1.3× center crop) for A4 framing ──
     // OV5640 ISP windowing: shrink the active sensor window so the lens
     // looks "less wide". X start 384, Y start 288, end at 2255/1679 →
-    // ~1872×1392 crop of the 2592×1944 array, rescaled back to QXGA.
+    // ~1872×1392 crop of the 2592×1944 array, rescaled back by the ISP.
     s->set_reg(s, 0x3800, 0xff, 0x01); s->set_reg(s, 0x3801, 0xff, 0x80);
     s->set_reg(s, 0x3802, 0xff, 0x01); s->set_reg(s, 0x3803, 0xff, 0x20);
     s->set_reg(s, 0x3804, 0xff, 0x08); s->set_reg(s, 0x3805, 0xff, 0xCF);
@@ -535,6 +535,8 @@ void handleLocalStream() {
 void handleLocalJpg() {
   if (!cameraOn) { localServer.send(503, "text/plain", "Camera is OFF."); return; }
   sensor_t* s = esp_camera_sensor_get();
+  if (s) s->set_framesize(s, isOv5640 ? FRAMESIZE_QSXGA : FRAMESIZE_QXGA);
+  for (int i = 0; i < 2; i++) { camera_fb_t* warm = esp_camera_fb_get(); if (warm) esp_camera_fb_return(warm); }
   applyOrientation(s);
   ov5640TriggerAf(s, 900);
   camera_fb_t* fb = esp_camera_fb_get();
@@ -1561,8 +1563,8 @@ bool captureAndSend() {
   sensor_t* s = esp_camera_sensor_get();
   applyOrientation(s);
 
-  // Restore QXGA in case the live preview left us in VGA
-  if (s) s->set_framesize(s, FRAMESIZE_QXGA);
+  // Restore document resolution in case the live preview left us in VGA
+  if (s) s->set_framesize(s, isOv5640 ? FRAMESIZE_QSXGA : FRAMESIZE_QXGA);
   // Flush stale frames from the previous resolution
   for (int i = 0; i < 2; i++) { camera_fb_t* fb = esp_camera_fb_get(); if (fb) esp_camera_fb_return(fb); }
 

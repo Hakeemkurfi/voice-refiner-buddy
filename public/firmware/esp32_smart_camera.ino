@@ -19,18 +19,18 @@
   2. Fixed image rotation / crop:
        · Added hmirror/vflip tuning constants you can flip at the top
        · Dashboard stream CSS-rotated 90° if ROTATE_STREAM is set
-  3. Sharpness improvements:
-       · OV5640 sharpness register 0x530A set to 0x08 (max hardware edge)
-       · ae_level → +1 for better visibility in typical indoor light
-       · Denoise still 0 (preserves pencil lines)
-       · quality 7 → 6 for better edge retention in JPEG
+  3. Document sharpness improvements:
+       · OV5640 autofocus sequence follows Espressif AF command order
+       · lower exposure/brightness to avoid washed-out paper
+       · Denoise still 0 (preserves pencil/ink strokes)
+       · JPEG quality 4 for better OCR edge retention
   4. Clean ring button mapping (calibrated):
-       · ▲ Up        → replay
-       · ▼ Down      → stop
+       · ▲ Up        → stop speech
+       · ▼ Down      → camera ON/OFF toggle
        · ◀ Left      → prev
        · ▶ Right     → next
        · Middle short (≤800 ms) → capture
-       · Middle long  (>800 ms) → camera_toggle (ON/OFF)
+       · Middle long  (>800 ms) → camera_toggle (backup)
   5. BLE auto-reconnect improvement:
        · Bond info preserved across reboots (NVS)
        · Disconnect → immediately start rescan (no 8 s penalty on first miss)
@@ -199,7 +199,7 @@ bool initCamera() {
   config.pixel_format = PIXFORMAT_JPEG;
   config.grab_mode    = CAMERA_GRAB_LATEST;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
-  config.jpeg_quality = 6;
+  config.jpeg_quality = 4;
   config.fb_count     = 2;
 
   esp_err_t err = esp_camera_init(&config);
@@ -223,13 +223,13 @@ bool initCamera() {
     // QXGA = 2048×1536. Best for document OCR while fitting PSRAM.
     s->set_framesize(s, FRAMESIZE_QXGA);
 
-    // ── JPEG quality 6: slightly sharper JPEG compression vs 7 ──
-    s->set_quality(s, 6);
+    // ── JPEG quality 4: larger file, better OCR edge retention ──
+    s->set_quality(s, 4);
 
     // ── Exposure & gain ──
     s->set_exposure_ctrl(s, 1);    // AEC on
     s->set_aec2(s, 1);             // AEC2 on
-    s->set_ae_level(s, 1);         // +1 exposure boost — helps under desk lamps
+    s->set_ae_level(s, -1);        // reduce washed-out white paper
     s->set_gain_ctrl(s, 1);        // AGC on
     s->set_agc_gain(s, 0);         // start at minimum ISO
     s->set_gainceiling(s, (gainceiling_t)2); // cap at 8× noise limit
@@ -238,12 +238,12 @@ bool initCamera() {
     // Fluorescent = stable on white paper under LED / tube / desk lamp
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 2);          // 0=auto 1=sunny 2=fluorescent 3=incandescent 4=flash
+    s->set_wb_mode(s, 0);          // 0=auto; avoids purple/green paper casts
 
     // ── Image quality — document-specific ──
-    s->set_brightness(s, 1);       // slight brightness boost for dim rooms
+    s->set_brightness(s, 0);       // no boost: prevents washed-out notes
     s->set_contrast(s, 2);         // black ink pops on white paper
-    s->set_saturation(s, 0);       // neutral (documents are mostly B&W)
+    s->set_saturation(s, -1);      // documents are mostly B&W
     s->set_sharpness(s, 3);        // maximum hardware sharpening via API
     s->set_denoise(s, 0);          // NO denoise — it blurs pencil lines
     s->set_lenc(s, 1);             // lens shading correction
@@ -289,18 +289,18 @@ bool initCamera() {
   } else {
     // ── OV3660 (fixed-focus, 3 MP) ──
     s->set_framesize(s, FRAMESIZE_QXGA);
-    s->set_quality(s, 6);
+    s->set_quality(s, 4);
     s->set_whitebal(s, 1);
     s->set_awb_gain(s, 1);
-    s->set_wb_mode(s, 3);          // incandescent works well indoors
+    s->set_wb_mode(s, 0);          // auto white balance for mixed room light
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 0);
-    s->set_ae_level(s, 1);
-    s->set_aec_value(s, 700);
+    s->set_ae_level(s, -1);
+    s->set_aec_value(s, 550);
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
     s->set_gainceiling(s, (gainceiling_t)1);
-    s->set_brightness(s, 1);
+    s->set_brightness(s, 0);
     s->set_contrast(s, 2);
     s->set_saturation(s, -1);
     s->set_sharpness(s, 3);
@@ -378,7 +378,7 @@ void handleLocalRoot() {
   page += "<title>ESP32 Smart Audio Tutor v3</title>";
   page += "<body style='font-family:Arial,sans-serif;margin:20px;line-height:1.6;background:#111;color:#eee'>";
   page += "<h2 style='color:#4af'>ESP32 Smart Audio Tutor v3</h2>";
-  page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame.</p>";
+  page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame, use bright even light.</p>";
 
   // Camera status indicator
   page += "<p id='camstatus' style='font-weight:bold;color:";
@@ -419,13 +419,21 @@ void handleLocalRoot() {
   page += "<p style='margin:0 0 8px;font-weight:bold;color:#4af'>🔵 S10 Ring Button Map (v3)</p>";
   page += "<table style='width:100%;border-collapse:collapse;font-size:14px'>";
   page += "<tr style='color:#888'><th style='text-align:left;padding:4px'>Button</th><th style='text-align:left;padding:4px'>Action</th></tr>";
-  page += "<tr><td style='padding:4px'>▲ Up</td><td>🔁 Replay</td></tr>";
-  page += "<tr><td style='padding:4px'>▼ Down</td><td>⏹ Stop speech</td></tr>";
+  page += "<tr><td style='padding:4px'>▲ Up</td><td>⏹ Stop speech</td></tr>";
+  page += "<tr><td style='padding:4px'>▼ Down</td><td>🔴/🟢 Camera ON/OFF</td></tr>";
   page += "<tr><td style='padding:4px'>◀ Left</td><td>⏮ Previous step</td></tr>";
   page += "<tr><td style='padding:4px'>▶ Right</td><td>⏭ Next step</td></tr>";
   page += "<tr><td style='padding:4px'>⏸ Middle (short &lt;0.8s)</td><td>📸 Capture photo</td></tr>";
-  page += "<tr><td style='padding:4px'>⏸ Middle (hold &gt;0.8s)</td><td>🔴/🟢 Camera ON/OFF</td></tr>";
+  page += "<tr><td style='padding:4px'>⏸ Middle (hold &gt;0.8s)</td><td>🔴/🟢 Camera ON/OFF backup</td></tr>";
   page += "</table></div>";
+
+  page += "<div style='background:#1a1a1a;border:1px solid #333;border-radius:8px;padding:12px;max-width:640px;margin-top:12px'>";
+  page += "<p style='margin:0 0 8px;font-weight:bold;color:#4af'>Capture checklist</p>";
+  page += "<ol style='margin:0 0 0 20px;color:#ddd'>";
+  page += "<li>Open this page first and frame the text until letters look sharp.</li>";
+  page += "<li>Use bright even light; avoid the phone/camera shadow on the page.</li>";
+  page += "<li>Hold still for one second, then press middle to capture.</li>";
+  page += "</ol></div>";
 
   page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";

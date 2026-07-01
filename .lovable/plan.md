@@ -1,56 +1,47 @@
-# Burst Capture + Security Fix
+I found three concrete problems to fix:
 
-## What we're building
+1. The ring is correctly detecting `prev`, but the ESP32 upload uses `HTTPClient` and returns `HTTP -1 connection refused`; I will replace command posting with the same raw HTTPS method already used by image upload, add WiFi checks, and print clearer network diagnostics.
+2. The current mouse-mode up/down actions call `volup` and `voldn`, but `ringAction()` does not handle those names, so up/down can silently do nothing; I will map down to camera ON/OFF toggle as you requested, up to stop/replay or stop audio, and keep left/right as previous/next.
+3. The photo in your upload is badly blurred/overexposed, so the AI cannot read the text reliably even if the model is good; I will adjust capture settings to prioritize document readability: stronger exposure control, less overexposure, better focus wait for OV5640, higher quality JPEG, and a better burst selection path.
 
-When you press **M** on the ring, the ESP32 records a ~4-second burst of ~24 JPEG frames (6 fps) at QXGA and streams them to the server as they're captured. You can slowly pan over half an A4 page. The server picks the 3 sharpest, most-different frames and sends them as a multi-image request to Gemini, which merges the text across frames.
+Implementation plan:
 
-## Why this beats single-shot
+- Firmware networking
+  - Replace `postCommand()` with a raw `WiFiClientSecure` HTTPS POST, matching `postJpeg()`.
+  - If WiFi is not connected, do not attempt POST; print `WiFi DOWN` instead of confusing HTTP -1.
+  - Keep printing the local dashboard IP every 15 seconds.
+  - Add serial/audit text showing `https://voice-refiner-buddy.lovable.app/api/public/event` and local `http://<ip>/`.
 
-- 24 chances at sharp focus instead of 1
-- Slow pan covers half-A4 even though OV3660 only resolves a small sharp window at any distance
-- Server-side Laplacian-variance scoring throws away blurry frames before Gemini sees them
-- Perceptual-hash dedup means holding still doesn't waste tokens
+- Ring button mapping
+  - Middle short press: capture and send.
+  - Down button/swipe: camera ON/OFF toggle, no long press needed.
+  - Left: previous audio step.
+  - Right: next audio step.
+  - Up: stop/replay audio control.
+  - Remove the broken `volup`/`voldn` action names.
+  - Improve the S10 report handling so noisy reports like `00 BC 42 1F`, `02 BC 42 1F`, `07 BC 92 1F` trigger only one clean action instead of repeats.
 
-## Plan
+- Camera/readability fix
+  - Confirm the code treats PID `0x5640` as OV5640 and PID `0x3660` as OV3660; the firmware already does this, but I will make the serial output clearer.
+  - Reduce over-bright washed-out captures by lowering brightness/AE level and using stronger contrast for paper.
+  - Increase JPEG quality for OCR.
+  - For OV5640, use the updated autofocus command sequence from Espressif’s OV5640 AF work: release/start/wait before capture.
+  - Keep QXGA capture for text, but ensure preview does not leave stale low-resolution frames.
+  - Add a simple capture checklist in Serial/local dashboard: hold 20–30 cm, good light, fill page, tap autofocus/capture.
 
-### 1. DB migration (one migration, two purposes)
+- App-side audio response reliability
+  - Verify `/api/public/event` accepts `prev`, `next`, `replay`, and `stop` already; it does.
+  - Keep app processing of those events unchanged, because the app already calls `playPrev()`, `playNext()`, `replayTts()`, and `stopTts()`.
 
-- New table `bursts(id uuid pk, device_id text, status text, created_at)` with grants + RLS.
-- New table `burst_frames(id uuid pk, burst_id uuid fk, seq int, image_b64 text, sharpness float, created_at)` with grants + RLS.
-- **Security fix #1**: drop the public SELECT policy on `events`. Web UI will poll via a new server function (`getRecentEvents`) that uses the admin client server-side, so the browser never reads `image_b64` or `device_id` directly.
-- **Security fix #2**: remove `events` from the `supabase_realtime` publication (kills the realtime subscription risk). UI switches from realtime to a 1.5s poll — same UX, no anon channel exposure.
+After this, your test should be:
 
-### 2. Backend
-
-- `/api/public/event` POST: when `?burst=<id>&seq=<n>` is present, insert into `burst_frames` instead of `events`. If `seq=0`, also create the `bursts` row.
-- New `/api/public/burst/finalize` (called by ESP32 after the last frame, or auto-finalized when no frames arrive for 1.5s): score all frames (Laplacian variance via pure-JS `jpeg-js` decode + 8×8 perceptual hash for dedup), keep top 3, mark burst `ready`, kick off analyze.
-- `analyze.functions.ts`: accept an array of image_b64. Send all 3 as `image_url` content blocks in one Gemini call with a "these are 1–3 frames of the SAME document, merge their text" instruction.
-- New `getRecentEvents` server fn (admin client, server-side only) returning the 5 most recent events with safe columns only — replaces the browser's direct query / realtime sub.
-
-### 3. Firmware
-
-- New `BURST_MS = 4000`, `BURST_FPS = 6`, `BURST_QUALITY = 6` (slightly lower per-frame quality so 24 frames fit).
-- **M button** now triggers `runBurst()` instead of `captureAndSend()`. Single-shot stays available on a long-press of M (>1s).
-- `runBurst()`: generate uuid, loop until `BURST_MS` elapsed, POST each frame with `?burst=<id>&seq=<n>` (chunked TLS upload as today), LED on during burst, blink at each frame, off when done, then POST `/burst/finalize`.
-
-### 4. UI
-
-- Replace realtime `events-stream` subscription with `useQuery({ queryFn: getRecentEvents, refetchInterval: 1500 })`.
-- Add a small "Burst" indicator that appears while a burst is in progress.
-
-## Tradeoffs you should know
-
-- **Total time per question rises** from ~4 s (single shot) to ~8–10 s (4 s burst + ~3 s upload + ~2 s Gemini). If that's too slow we can drop to `BURST_MS = 2500` / `FPS = 8`.
-- **Gemini cost ~3×** per question (3 images instead of 1). Worth it for reliability on hard frames.
-- **Per-frame JPEG quality drops slightly** (Q=6 vs Q=4) to fit the burst in memory + bandwidth — the *sharpest selected frame* will still be sharper than today's single shot because we get 24 tries.
-
-## Files I'll change
-
-- `supabase/migrations/<new>.sql` — bursts + burst_frames tables, drop events SELECT policy, drop events from realtime publication
-- `src/routes/api/public/event.ts` — handle `?burst=&seq=` route
-- `src/routes/api/public/burst.finalize.ts` — new finalize endpoint
-- `src/lib/analyze.functions.ts` — multi-image input + `getRecentEvents` server fn
-- `src/routes/index.tsx` — swap realtime for polled query, burst indicator
-- `public/firmware/esp32_smart_camera.ino` — burst mode on M button
-
-Ready to build all six?
+```text
+1. Flash firmware.
+2. Open Serial Monitor.
+3. Wait for: [net] Dashboard: http://<ip>/
+4. Open that IP to check framing/focus.
+5. Press middle once: photo should upload.
+6. Press left/right: audio should go previous/next.
+7. Press up: stop/replay audio.
+8. Press down: camera toggles OFF/ON.
+```

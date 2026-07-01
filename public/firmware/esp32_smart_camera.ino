@@ -1,5 +1,5 @@
 /*
-  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.1
+  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.2
   ─────────────────────────────────────────────────────────────
   Board:            "ESP32S3 Dev Module"
   USB CDC On Boot:  "Enabled"
@@ -77,6 +77,10 @@ const char* DEVICE_ID     = "esp32-cam-01";
 #define UPLOAD_CHUNK_SIZE   4096
 #define IDLE_AF_INTERVAL_MS 8000
 #define HTTPS_CONNECT_RETRIES 3
+// Browser relay avoids the ESP32 TLS failure shown by your logs. Keep the
+// ESP32 local dashboard open; the phone/browser uploads captures and button
+// commands to the app over HTTPS, which works when ESP32 TLS cannot connect.
+#define BROWSER_RELAY_FIRST 1
 // ================================
 
 // ====== BURST CAPTURE ======
@@ -165,6 +169,9 @@ void initRingBle();
 void maintainRingBle();
 bool initCamera();
 void toggleCamera();
+void queueBrowserRelay(const char* action);
+bool sendCommandSmart(const char* type);
+bool captureSmart();
 
 // ----- Camera pin map (ESP32S3_WROOM_CAM) -----
 #define PWDN_GPIO_NUM     -1

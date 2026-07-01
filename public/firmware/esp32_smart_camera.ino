@@ -1,5 +1,5 @@
 /*
-  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.0
+  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.1
   ─────────────────────────────────────────────────────────────
   Board:            "ESP32S3 Dev Module"
   USB CDC On Boot:  "Enabled"
@@ -63,10 +63,11 @@ const char* DEVICE_ID     = "esp32-cam-01";
 // ========================
 
 // ====== IMAGE ORIENTATION ======
-// If your stream/capture appears rotated or mirrored, flip these:
+// If your stream/capture appears upside down, BOTH must be 1 for a true 180° fix.
+// Your latest sample is upside down, so v3.1 defaults to 180° rotation.
 //   0 = off, 1 = on
-#define HMIRROR  0   // horizontal mirror
-#define VFLIP    0   // vertical flip
+#define HMIRROR  1   // horizontal mirror
+#define VFLIP    1   // vertical flip
 // If the stream looks 90° rotated, set this to 1 — the dashboard page will
 // CSS-rotate the <img> by 90° so it looks upright on screen.
 #define ROTATE_STREAM_CSS 0
@@ -75,6 +76,7 @@ const char* DEVICE_ID     = "esp32-cam-01";
 // ====== PERFORMANCE TUNING ======
 #define UPLOAD_CHUNK_SIZE   4096
 #define IDLE_AF_INTERVAL_MS 8000
+#define HTTPS_CONNECT_RETRIES 3
 // ================================
 
 // ====== BURST CAPTURE ======
@@ -98,6 +100,61 @@ const char* RING_NAME_HINT = "S10";
 #define MIDDLE_LONGPRESS_MS 800
 
 WebServer localServer(80);
+static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
+static bool runtimeFlip   = VFLIP;
+
+static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint16_t port, const char* label) {
+  IPAddress ip;
+  if (WiFi.hostByName(host, ip)) {
+    Serial.printf("  [dns] %s -> %s\n", host, ip.toString().c_str());
+  } else {
+    Serial.printf("  [dns] FAILED for %s\n", host);
+  }
+  for (int attempt = 1; attempt <= HTTPS_CONNECT_RETRIES; attempt++) {
+    client.stop();
+    delay(80 * attempt);
+    Serial.printf("  [tls] %s connect attempt %d/%d to %s:%u\n",
+                  label, attempt, HTTPS_CONNECT_RETRIES, host, port);
+    if (client.connect(host, port)) return true;
+    if (WiFi.status() != WL_CONNECTED) break;
+    delay(250 * attempt);
+  }
+  WiFiClient tcpProbe;
+  tcpProbe.setTimeout(5000);
+  bool tcpOk = tcpProbe.connect(host, port);
+  tcpProbe.stop();
+  Serial.printf("  [tls] %s connect failed after %d tries (WiFi=%s RSSI=%d).\n",
+                label,
+                HTTPS_CONNECT_RETRIES,
+                WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
+                WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  Serial.printf("  [net] plain TCP port %u probe: %s\n", port, tcpOk ? "OK (TLS handshake problem)" : "FAILED (hotspot/internet/firewall problem)");
+  if (WiFi.status() == WL_CONNECTED && WiFi.RSSI() < -70) {
+    Serial.println("  [net] RSSI is weak for upload; move the hotspot/phone closer or use another 2.4GHz WiFi.");
+  }
+  return false;
+}
+
+static void applyOrientation(sensor_t* s) {
+  if (!s) return;
+  s->set_hmirror(s, runtimeMirror ? 1 : 0);
+  s->set_vflip(s, runtimeFlip ? 1 : 0);
+  delay(20);
+}
+
+static void applyDocumentTuning(sensor_t* s) {
+  if (!s) return;
+  s->set_brightness(s, -1);      // lower white-paper washout
+  s->set_contrast(s, 2);         // black text stronger
+  s->set_saturation(s, -2);      // documents are not color-critical
+  s->set_sharpness(s, 3);        // maximum API sharpening
+  s->set_denoise(s, 0);          // denoise smears pencil/ink strokes
+  s->set_lenc(s, 1);
+  s->set_bpc(s, 1);
+  s->set_wpc(s, 1);
+  s->set_raw_gma(s, 1);
+  applyOrientation(s);
+}
 
 // ─── Forward declarations ───
 bool postCommand(const char* type);
@@ -223,8 +280,8 @@ bool initCamera() {
 
   if (isOv5640) {
     // ── Resolution ──
-    // QXGA = 2048×1536. Best for document OCR while fitting PSRAM.
-    s->set_framesize(s, FRAMESIZE_QXGA);
+    // QSXGA = 2560×1920. Use the full OV5640 sensor for document OCR.
+    s->set_framesize(s, FRAMESIZE_QSXGA);
 
     // ── JPEG quality 4: larger file, better OCR edge retention ──
     s->set_quality(s, 4);
@@ -232,10 +289,11 @@ bool initCamera() {
     // ── Exposure & gain ──
     s->set_exposure_ctrl(s, 1);    // AEC on
     s->set_aec2(s, 1);             // AEC2 on
-    s->set_ae_level(s, -1);        // reduce washed-out white paper
+    s->set_ae_level(s, -2);        // reduce washed-out white paper
+    s->set_aec_value(s, 560);      // good starting point for white pages
     s->set_gain_ctrl(s, 1);        // AGC on
     s->set_agc_gain(s, 0);         // start at minimum ISO
-    s->set_gainceiling(s, (gainceiling_t)2); // cap at 8× noise limit
+    s->set_gainceiling(s, (gainceiling_t)1); // cap noise for OCR
 
     // ── White balance ──
     // Fluorescent = stable on white paper under LED / tube / desk lamp
@@ -243,20 +301,8 @@ bool initCamera() {
     s->set_awb_gain(s, 1);
     s->set_wb_mode(s, 0);          // 0=auto; avoids purple/green paper casts
 
-    // ── Image quality — document-specific ──
-    s->set_brightness(s, 0);       // no boost: prevents washed-out notes
-    s->set_contrast(s, 2);         // black ink pops on white paper
-    s->set_saturation(s, -1);      // documents are mostly B&W
-    s->set_sharpness(s, 3);        // maximum hardware sharpening via API
-    s->set_denoise(s, 0);          // NO denoise — it blurs pencil lines
-    s->set_lenc(s, 1);             // lens shading correction
-    s->set_bpc(s, 1);              // bad-pixel correction
-    s->set_wpc(s, 1);              // white-pixel correction
-    s->set_raw_gma(s, 1);          // raw gamma
-
-    // ── Orientation ──
-    s->set_hmirror(s, HMIRROR);
-    s->set_vflip(s, VFLIP);
+    // ── Image quality + orientation — document-specific ──
+    applyDocumentTuning(s);
     s->set_colorbar(s, 0);
     s->set_special_effect(s, 0);
 
@@ -272,7 +318,7 @@ bool initCamera() {
     // ── Narrow the field of view (~1.3× center crop) for A4 framing ──
     // OV5640 ISP windowing: shrink the active sensor window so the lens
     // looks "less wide". X start 384, Y start 288, end at 2255/1679 →
-    // ~1872×1392 crop of the 2592×1944 array, rescaled back to QXGA.
+    // ~1872×1392 crop of the 2592×1944 array, rescaled back by the ISP.
     s->set_reg(s, 0x3800, 0xff, 0x01); s->set_reg(s, 0x3801, 0xff, 0x80);
     s->set_reg(s, 0x3802, 0xff, 0x01); s->set_reg(s, 0x3803, 0xff, 0x20);
     s->set_reg(s, 0x3804, 0xff, 0x08); s->set_reg(s, 0x3805, 0xff, 0xCF);
@@ -298,22 +344,12 @@ bool initCamera() {
     s->set_wb_mode(s, 0);          // auto white balance for mixed room light
     s->set_exposure_ctrl(s, 1);
     s->set_aec2(s, 0);
-    s->set_ae_level(s, -1);
+    s->set_ae_level(s, -2);
     s->set_aec_value(s, 550);
     s->set_gain_ctrl(s, 1);
     s->set_agc_gain(s, 0);
     s->set_gainceiling(s, (gainceiling_t)1);
-    s->set_brightness(s, 0);
-    s->set_contrast(s, 2);
-    s->set_saturation(s, -1);
-    s->set_sharpness(s, 3);
-    s->set_denoise(s, 0);
-    s->set_lenc(s, 1);
-    s->set_bpc(s, 1);
-    s->set_wpc(s, 1);
-    s->set_raw_gma(s, 1);
-    s->set_hmirror(s, HMIRROR);
-    s->set_vflip(s, VFLIP);
+    applyDocumentTuning(s);
     s->set_colorbar(s, 0);
     s->set_special_effect(s, 0);
     // OV3660 extra sharpness registers
@@ -382,6 +418,7 @@ void handleLocalRoot() {
   page += "<body style='font-family:Arial,sans-serif;margin:20px;line-height:1.6;background:#111;color:#eee'>";
   page += "<h2 style='color:#4af'>ESP32 Smart Audio Tutor v3</h2>";
   page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame, use bright even light.</p>";
+  page += "<p style='color:#ffdb70;font-weight:bold'>v3.1 orientation is fixed for your latest upside-down sample: HMIRROR=1 and VFLIP=1. If it ever becomes upside down again, type <code>rot</code> in Serial.</p>";
 
   // Camera status indicator
   page += "<p id='camstatus' style='font-weight:bold;color:";
@@ -438,7 +475,7 @@ void handleLocalRoot() {
   page += "<li>Hold still for one second, then press middle to capture.</li>";
   page += "</ol></div>";
 
-  page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip</p>";
+  page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip / rot</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
   page += "</body>";
 
@@ -498,6 +535,9 @@ void handleLocalStream() {
 void handleLocalJpg() {
   if (!cameraOn) { localServer.send(503, "text/plain", "Camera is OFF."); return; }
   sensor_t* s = esp_camera_sensor_get();
+  if (s) s->set_framesize(s, isOv5640 ? FRAMESIZE_QSXGA : FRAMESIZE_QXGA);
+  for (int i = 0; i < 2; i++) { camera_fb_t* warm = esp_camera_fb_get(); if (warm) esp_camera_fb_return(warm); }
+  applyOrientation(s);
   ov5640TriggerAf(s, 900);
   camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) { localServer.send(500, "text/plain", "camera capture failed"); return; }
@@ -601,13 +641,15 @@ bool postJpeg(uint8_t* buf, size_t len) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
 
   String path = String(SERVER_PATH) + "?type=capture";
   Serial.printf("POST https://%s%s  (%u bytes)\n",
                 SERVER_HOST, path.c_str(), (unsigned)len);
 
-  if (!client.connect(SERVER_HOST, 443)) {
-    Serial.println("  -> HTTPS connect failed");
+  if (!tlsConnectWithRetry(client, SERVER_HOST, 443, "jpeg")) {
+    Serial.printf("  -> HTTPS connect failed. App endpoint is online; this is the ESP32/hotspot TLS path. RSSI=%d dBm\n",
+                  WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
     return false;
   }
 
@@ -685,15 +727,14 @@ bool postCommand(const char* type) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
 
   String body = String("{\"type\":\"") + type + "\",\"device_id\":\"" + DEVICE_ID + "\"}";
   Serial.printf("POST %s -> https://%s%s\n", type, SERVER_HOST, SERVER_PATH);
 
-  if (!client.connect(SERVER_HOST, 443)) {
-    Serial.printf("POST %s -> HTTPS connect failed (WiFi=%s RSSI=%d). Check hotspot/mobile data.\n",
-                  type,
-                  WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
-                  WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  if (!tlsConnectWithRetry(client, SERVER_HOST, 443, type)) {
+    Serial.printf("POST %s -> HTTPS connect failed. App endpoint is online; try stronger hotspot signal or another WiFi.\n",
+                  type);
     client.stop();
     return false;
   }
@@ -736,6 +777,7 @@ bool checkServer() {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(20000);
@@ -1392,8 +1434,9 @@ bool postBurstFrame(const char* burstId, int seq, uint8_t* buf, size_t len) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
   String path = String(SERVER_PATH) + "?burst=" + burstId + "&seq=" + String(seq);
-  if (!client.connect(SERVER_HOST, 443)) {
+  if (!tlsConnectWithRetry(client, SERVER_HOST, 443, "burst")) {
     Serial.printf("  [burst %d] HTTPS connect failed\n", seq);
     return false;
   }
@@ -1427,6 +1470,7 @@ bool postBurstFinalize(const char* burstId) {
   WiFiClientSecure client;
   client.setInsecure();
   client.setTimeout(15000);
+  client.setHandshakeTimeout(20);
   HTTPClient http;
   http.setReuse(false);
   http.setTimeout(20000);
@@ -1517,9 +1561,10 @@ bool captureAndSend() {
   lastIdleAf = millis();
 
   sensor_t* s = esp_camera_sensor_get();
+  applyOrientation(s);
 
-  // Restore QXGA in case the live preview left us in VGA
-  if (s) s->set_framesize(s, FRAMESIZE_QXGA);
+  // Restore document resolution in case the live preview left us in VGA
+  if (s) s->set_framesize(s, isOv5640 ? FRAMESIZE_QSXGA : FRAMESIZE_QXGA);
   // Flush stale frames from the previous resolution
   for (int i = 0; i < 2; i++) { camera_fb_t* fb = esp_camera_fb_get(); if (fb) esp_camera_fb_return(fb); }
 
@@ -1655,10 +1700,10 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) startLocalDashboard();
   initRingBle();
   Serial.println("Ready. Serial commands:");
-  Serial.println("  ping cap burst next prev ring af audit calibrate cam flip");
+  Serial.println("  ping cap burst next prev ring af audit calibrate cam flip rot");
   Serial.println("TIP: type 'calibrate' to safely identify S10 buttons.");
   Serial.println("TIP: type 'cam' to toggle camera ON/OFF (heat management).");
-  Serial.println("TIP: type 'flip' to toggle hmirror on/off at runtime.");
+  Serial.println("TIP: type 'rot' to toggle 180° rotation at runtime if preview is upside down.");
 }
 
 void printAudit() {
@@ -1672,7 +1717,8 @@ void printAudit() {
   }
   Serial.printf("  Server             : https://%s%s\n", SERVER_HOST, SERVER_PATH);
   Serial.printf("  Camera             : %s\n", cameraOn ? "ON" : "OFF");
-  Serial.printf("  HMIRROR / VFLIP    : %d / %d\n", HMIRROR, VFLIP);
+  Serial.printf("  HMIRROR / VFLIP    : %d / %d (runtime %d / %d)\n",
+                HMIRROR, VFLIP, runtimeMirror ? 1 : 0, runtimeFlip ? 1 : 0);
   Serial.printf("  Rotate stream CSS  : %s\n", ROTATE_STREAM_CSS ? "YES" : "no");
   Serial.printf("  Sensor PID         : 0x%04x (%s)\n", sensorPid,
                 isOv5640 ? "OV5640 AF" :
@@ -1686,8 +1732,6 @@ void printAudit() {
   printRingStatus();
   Serial.println("================================");
 }
-
-static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
 
 void handleSerial() {
   static String line;
@@ -1715,6 +1759,19 @@ void handleSerial() {
           sensor_t* s = esp_camera_sensor_get();
           if (s) s->set_hmirror(s, runtimeMirror ? 1 : 0);
           Serial.printf("hmirror = %d\n", runtimeMirror ? 1 : 0);
+        }
+      }
+      else if (line.equalsIgnoreCase("rot"))       {
+        if (!cameraOn) { Serial.println("Camera is OFF — turn it on first (cam)"); }
+        else {
+          runtimeMirror = !runtimeMirror;
+          runtimeFlip   = !runtimeFlip;
+          sensor_t* s = esp_camera_sensor_get();
+          if (s) {
+            s->set_hmirror(s, runtimeMirror ? 1 : 0);
+            s->set_vflip(s, runtimeFlip ? 1 : 0);
+          }
+          Serial.printf("rotation toggled: hmirror=%d vflip=%d\n", runtimeMirror ? 1 : 0, runtimeFlip ? 1 : 0);
         }
       }
       else if (line.equalsIgnoreCase("calibrate")) {
@@ -1759,7 +1816,7 @@ void handleSerial() {
         Serial.println("[wiz] /wizlog.txt cleared");
       }
       else if (line.length() > 0) {
-        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip wizard wizshow wizreset)\n",
+        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip rot wizard wizshow wizreset)\n",
                       line.c_str());
       }
       line = "";

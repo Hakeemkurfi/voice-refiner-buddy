@@ -119,11 +119,19 @@ static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint
     if (WiFi.status() != WL_CONNECTED) break;
     delay(250 * attempt);
   }
+  WiFiClient tcpProbe;
+  tcpProbe.setTimeout(5000);
+  bool tcpOk = tcpProbe.connect(host, port);
+  tcpProbe.stop();
   Serial.printf("  [tls] %s connect failed after %d tries (WiFi=%s RSSI=%d).\n",
                 label,
                 HTTPS_CONNECT_RETRIES,
                 WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
                 WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0);
+  Serial.printf("  [net] plain TCP port %u probe: %s\n", port, tcpOk ? "OK (TLS handshake problem)" : "FAILED (hotspot/internet/firewall problem)");
+  if (WiFi.status() == WL_CONNECTED && WiFi.RSSI() < -70) {
+    Serial.println("  [net] RSSI is weak for upload; move the hotspot/phone closer or use another 2.4GHz WiFi.");
+  }
   return false;
 }
 

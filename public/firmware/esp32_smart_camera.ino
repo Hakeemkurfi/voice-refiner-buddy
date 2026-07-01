@@ -402,6 +402,7 @@ void handleLocalRoot() {
   page += "<body style='font-family:Arial,sans-serif;margin:20px;line-height:1.6;background:#111;color:#eee'>";
   page += "<h2 style='color:#4af'>ESP32 Smart Audio Tutor v3</h2>";
   page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame, use bright even light.</p>";
+  page += "<p style='color:#ffdb70;font-weight:bold'>v3.1 orientation is fixed for your latest upside-down sample: HMIRROR=1 and VFLIP=1. If it ever becomes upside down again, type <code>rot</code> in Serial.</p>";
 
   // Camera status indicator
   page += "<p id='camstatus' style='font-weight:bold;color:";
@@ -458,7 +459,7 @@ void handleLocalRoot() {
   page += "<li>Hold still for one second, then press middle to capture.</li>";
   page += "</ol></div>";
 
-  page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip</p>";
+  page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip / rot</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
   page += "</body>";
 

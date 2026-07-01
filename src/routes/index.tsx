@@ -639,8 +639,8 @@ function Index() {
             <div className="rounded-md border bg-muted/30 p-3">
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">ESP32 side (via BLE)</p>
               <ul className="text-xs space-y-1.5 font-mono">
-                <li><span className="inline-block w-28 font-bold text-primary">▲ Up</span>→ 🔁 Replay step</li>
-                <li><span className="inline-block w-28 font-bold text-primary">▼ Down</span>→ ⏹ Stop speech</li>
+                <li><span className="inline-block w-28 font-bold text-primary">▲ Up</span>→ ⏹ Stop speech</li>
+                <li><span className="inline-block w-28 font-bold text-primary">▼ Down</span>→ 🔴/🟢 Camera ON/OFF</li>
                 <li><span className="inline-block w-28 font-bold text-primary">◀ Left</span>→ ⏮ Previous step</li>
                 <li><span className="inline-block w-28 font-bold text-primary">▶ Right</span>→ ⏭ Next step</li>
                 <li><span className="inline-block w-28 font-bold text-primary">⏸ Mid (short)</span>→ 📸 Capture photo</li>
@@ -933,8 +933,7 @@ function Index() {
               <code className="bg-background px-1 rounded">cam</code> to toggle camera ON/OFF.
             </li>
             <li>
-              Open this page on your phone, tap <b>Enable audio</b>, connect your earbuds, then lock
-              the phone. Press the capture button on the ESP32 whenever you want to analyze something.
+              Open the ESP32 local dashboard and keep it open; it relays captures/buttons through your phone when ESP32 HTTPS fails.
             </li>
             <li>
               <a className="underline" href="/firmware/esp32_smart_camera.ino" download>

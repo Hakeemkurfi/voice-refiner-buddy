@@ -466,10 +466,10 @@ void handleLocalRoot() {
   page += cameraOn ? "🟢 ON" : "🔴 OFF";
   page += "</p>";
 
-  // Stream (only show when camera is on)
+  // Preview (snapshot refresh instead of blocking MJPEG, so relay requests work)
   if (cameraOn) {
     page += "<div style='overflow:hidden;max-width:720px;border:2px solid #333;border-radius:8px;margin-bottom:12px'>";
-    page += "<img id='live' src='/stream' style='" + rotStyle + "border:none'>";
+    page += "<img id='live' src='/preview.jpg' style='" + rotStyle + "border:none'>";
     page += "</div>";
   } else {
     page += "<div style='width:100%;max-width:720px;height:200px;background:#222;border:2px solid #555;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;color:#888'>Camera is OFF — click \"Camera ON\" to start preview</div>";
@@ -517,10 +517,11 @@ void handleLocalRoot() {
 
   page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip / rot</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
-  page += "<script>const H='https://" + String(SERVER_HOST) + "';const P='" + String(SERVER_PATH) + "';const D='" + String(DEVICE_ID) + "-browser-relay';";
+  page += "<script>const H='https://" + String(SERVER_HOST) + "';const P='" + String(SERVER_PATH) + "';const D='" + String(DEVICE_ID) + "-browser-relay';let relaying=false;";
   page += "async function postCmd(t){let r=document.getElementById('relay');r.textContent='Relaying '+t+' to app...';let res=await fetch(H+P,{method:'POST',headers:{'Content-Type':'application/json','X-Device-Id':D},body:JSON.stringify({type:t,device_id:D})});r.textContent=res.ok?'✓ Relayed '+t:'✗ Relay '+t+' failed: HTTP '+res.status;}";
   page += "async function postCap(){let r=document.getElementById('relay');r.textContent='Capturing high-res JPEG from ESP32...';let img=await fetch('/jpg',{cache:'no-store'});if(!img.ok){r.textContent='✗ ESP32 /jpg failed: HTTP '+img.status;return;}let b=await img.blob();r.textContent='Uploading '+Math.round(b.size/1024)+' KB to app...';let res=await fetch(H+P+'?type=capture',{method:'POST',headers:{'Content-Type':'image/jpeg','X-Device-Id':D},body:b});r.textContent=res.ok?'✓ Capture uploaded. Check the app for the answer.':'✗ Upload failed: HTTP '+res.status;}";
-  page += "async function pollRelay(){try{let q=await fetch('/relay/pop',{cache:'no-store'});let j=await q.json();if(j.action){if(j.action==='capture')await postCap();else await postCmd(j.action);}}catch(e){let r=document.getElementById('relay');if(r)r.textContent='Relay waiting: '+e.message;}}setInterval(pollRelay,700);pollRelay();</script>";
+  page += "async function pollRelay(){if(relaying)return;try{let q=await fetch('/relay/pop',{cache:'no-store'});let j=await q.json();if(j.action){relaying=true;if(j.action==='capture')await postCap();else await postCmd(j.action);relaying=false;}}catch(e){relaying=false;let r=document.getElementById('relay');if(r)r.textContent='Relay waiting: '+e.message;}}";
+  page += "function refreshPreview(){let img=document.getElementById('live');if(img&&!relaying)img.src='/preview.jpg?t='+Date.now();}setInterval(refreshPreview,900);setInterval(pollRelay,700);pollRelay();</script>";
   page += "</body>";
 
   localServer.send(200, "text/html", page);
@@ -595,6 +596,22 @@ void handleLocalJpg() {
   esp_camera_fb_return(fb);
 }
 
+void handleLocalPreviewJpg() {
+  if (!cameraOn) { localServer.send(503, "text/plain", "Camera is OFF."); return; }
+  sensor_t* s = esp_camera_sensor_get();
+  if (s) s->set_framesize(s, FRAMESIZE_VGA);
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) { localServer.send(500, "text/plain", "preview capture failed"); return; }
+  WiFiClient localClient = localServer.client();
+  localClient.print("HTTP/1.1 200 OK\r\n");
+  localClient.print("Content-Type: image/jpeg\r\n");
+  localClient.printf("Content-Length: %u\r\n", (unsigned)fb->len);
+  localClient.print("Cache-Control: no-store\r\n");
+  localClient.print("Connection: close\r\n\r\n");
+  localClient.write(fb->buf, fb->len);
+  esp_camera_fb_return(fb);
+}
+
 void handleLocalCapture() {
   if (!cameraOn) {
     localServer.send(200, "text/html", "<p>Camera is OFF. <a href='/cam'>Turn it on</a> first.</p><p><a href='/'>Back</a></p>");
@@ -648,6 +665,7 @@ void handleLocalRelayAction() {
 void startLocalDashboard() {
   localServer.on("/",        handleLocalRoot);
   localServer.on("/jpg",     handleLocalJpg);
+  localServer.on("/preview.jpg", handleLocalPreviewJpg);
   localServer.on("/stream",  handleLocalStream);
   localServer.on("/capture", handleLocalCapture);
   localServer.on("/ping",    handleLocalPing);

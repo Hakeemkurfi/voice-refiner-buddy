@@ -100,6 +100,8 @@ const char* RING_NAME_HINT = "S10";
 #define MIDDLE_LONGPRESS_MS 800
 
 WebServer localServer(80);
+static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
+static bool runtimeFlip   = VFLIP;
 
 static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint16_t port, const char* label) {
   for (int attempt = 1; attempt <= HTTPS_CONNECT_RETRIES; attempt++) {
@@ -1713,9 +1715,6 @@ void printAudit() {
   printRingStatus();
   Serial.println("================================");
 }
-
-static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
-static bool runtimeFlip   = VFLIP;
 
 void handleSerial() {
   static String line;

@@ -990,15 +990,15 @@ void ringAction(const char* action) {
                 ringConnected ? "YES" : "NO",
                 cameraOn      ? "ON"  : "OFF");
 
-  if      (!strcmp(action, "capture"))       { if (cameraOn) captureAndSend(); else Serial.println("  >> Camera is OFF — long-press middle to turn it ON first"); }
+  if      (!strcmp(action, "capture"))       { if (cameraOn) captureSmart(); else Serial.println("  >> Camera is OFF — press DOWN / cam to turn it ON first"); }
   else if (!strcmp(action, "camera_toggle")) toggleCamera();
-  else if (!strcmp(action, "burst"))         { if (cameraOn) runBurst(); else Serial.println("  >> Camera is OFF"); }
-  else if (!strcmp(action, "single"))        { if (cameraOn) captureAndSend(); else Serial.println("  >> Camera is OFF"); }
-  else if (!strcmp(action, "next"))          postCommand("next");
-  else if (!strcmp(action, "prev"))          postCommand("prev");
-  else if (!strcmp(action, "replay"))        postCommand("replay");
-  else if (!strcmp(action, "stop"))          postCommand("stop");
-  else if (!strcmp(action, "up_stop"))       postCommand("stop");
+  else if (!strcmp(action, "burst"))         { if (cameraOn) queueBrowserRelay("capture"); else Serial.println("  >> Camera is OFF"); }
+  else if (!strcmp(action, "single"))        { if (cameraOn) captureSmart(); else Serial.println("  >> Camera is OFF"); }
+  else if (!strcmp(action, "next"))          sendCommandSmart("next");
+  else if (!strcmp(action, "prev"))          sendCommandSmart("prev");
+  else if (!strcmp(action, "replay"))        sendCommandSmart("replay");
+  else if (!strcmp(action, "stop"))          sendCommandSmart("stop");
+  else if (!strcmp(action, "up_stop"))       sendCommandSmart("stop");
   else if (!strcmp(action, "down_cam"))      toggleCamera();
 }
 
@@ -1734,6 +1734,20 @@ bool captureAndSend() {
   return ok;
 }
 
+bool captureSmart() {
+#if BROWSER_RELAY_FIRST
+  if (!cameraOn) {
+    Serial.println("[relay] capture not queued — camera is OFF.");
+    return false;
+  }
+  queueBrowserRelay("capture");
+  Serial.println("[relay] capture queued. Keep the ESP32 dashboard open; browser will fetch /jpg and upload.");
+  return true;
+#else
+  return captureAndSend();
+#endif
+}
+
 
 // ============================================================
 //  HARDWARE BUTTONS
@@ -1813,10 +1827,10 @@ void handleSerial() {
     if (c == '\n') {
       line.trim();
       if      (line.equalsIgnoreCase("ping"))      { Serial.println("[serial] ping");  checkServer(); }
-      else if (line.equalsIgnoreCase("cap"))        { Serial.println("[serial] cap");   Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
+      else if (line.equalsIgnoreCase("cap"))        { Serial.println("[serial] cap");   Serial.println(captureSmart() ? "✓ Capture queued/sent" : "✗ Capture FAILED"); }
       else if (line.equalsIgnoreCase("burst"))      { Serial.println("[serial] burst"); runBurst(); }
-      else if (line.equalsIgnoreCase("next"))       { postCommand("next"); }
-      else if (line.equalsIgnoreCase("prev"))       { postCommand("prev"); }
+      else if (line.equalsIgnoreCase("next"))       { sendCommandSmart("next"); }
+      else if (line.equalsIgnoreCase("prev"))       { sendCommandSmart("prev"); }
       else if (line.equalsIgnoreCase("ring"))       { printRingStatus(); }
       else if (line.equalsIgnoreCase("af"))         {
         sensor_t* s = esp_camera_sensor_get();
@@ -1944,10 +1958,10 @@ void loop() {
 
   if (pressed(CAPTURE_BTN, &capState,  &capT))  {
     Serial.println("[BTN] CAPTURE pressed");
-    Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED");
+    Serial.println(captureSmart() ? "✓ Capture queued/sent" : "✗ Capture FAILED");
   }
-  if (pressed(NEXT_BTN, &nextState, &nextT)) { Serial.println("[BTN] NEXT");  postCommand("next"); }
-  if (pressed(PREV_BTN, &prevState, &prevT)) { Serial.println("[BTN] PREV");  postCommand("prev"); }
+  if (pressed(NEXT_BTN, &nextState, &nextT)) { Serial.println("[BTN] NEXT");  sendCommandSmart("next"); }
+  if (pressed(PREV_BTN, &prevState, &prevT)) { Serial.println("[BTN] PREV");  sendCommandSmart("prev"); }
 
   maintainRingBle();   // always — pair the ring even with WiFi down
   idlePreFocus();

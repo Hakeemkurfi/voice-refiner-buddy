@@ -871,6 +871,10 @@ static unsigned long lastRingHashAt = 0;
 // press and an all-zero report on release.
 static bool ringMiddleHeld = false;
 static unsigned long ringMiddleHeldAt = 0;
+// Refreshed every time we see the S10 middle-button signature report
+// (?? F4 01 19). loop() uses this to synthesise a release edge when the
+// pattern stops arriving, because the ring never sends an all-zero release.
+volatile unsigned long lastMiddlePatternAt = 0;
 
 void ringFireMiddle(bool isRelease) {
   if (!isRelease) {

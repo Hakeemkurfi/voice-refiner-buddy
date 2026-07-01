@@ -107,6 +107,37 @@ WebServer localServer(80);
 static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
 static bool runtimeFlip   = VFLIP;
 
+// Browser relay queue: ring/hardware actions are stored here, then the local
+// dashboard page forwards them to the published HTTPS app from the phone.
+static String relayQueue[12];
+static uint8_t relayHead = 0;
+static uint8_t relayTail = 0;
+static uint8_t relayCount = 0;
+
+void queueBrowserRelay(const char* action) {
+  if (!action || !action[0]) return;
+  if (relayCount >= 12) {
+    Serial.println("[relay] queue full — dropping oldest action");
+    relayHead = (relayHead + 1) % 12;
+    relayCount--;
+  }
+  relayQueue[relayTail] = String(action);
+  relayTail = (relayTail + 1) % 12;
+  relayCount++;
+  Serial.printf("[relay] queued '%s' for browser dashboard. Keep http://%s/ open.\n",
+                action,
+                WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "ESP32-IP");
+}
+
+String popBrowserRelay() {
+  if (relayCount == 0) return "";
+  String action = relayQueue[relayHead];
+  relayQueue[relayHead] = "";
+  relayHead = (relayHead + 1) % 12;
+  relayCount--;
+  return action;
+}
+
 static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint16_t port, const char* label) {
   IPAddress ip;
   if (WiFi.hostByName(host, ip)) {
@@ -425,6 +456,7 @@ void handleLocalRoot() {
   page += "<body style='font-family:Arial,sans-serif;margin:20px;line-height:1.6;background:#111;color:#eee'>";
   page += "<h2 style='color:#4af'>ESP32 Smart Audio Tutor v3</h2>";
   page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame, use bright even light.</p>";
+  page += "<p id='relay' style='background:#15351f;border:1px solid #286b3a;border-radius:8px;padding:10px;color:#b8ffc7'><b>Browser relay ON:</b> keep this page open. If ESP32 HTTPS fails, this phone/browser will upload captures and send prev/next/stop to the app.</p>";
   page += "<p style='color:#ffdb70;font-weight:bold'>v3.1 orientation is fixed for your latest upside-down sample: HMIRROR=1 and VFLIP=1. If it ever becomes upside down again, type <code>rot</code> in Serial.</p>";
 
   // Camera status indicator
@@ -448,7 +480,7 @@ void handleLocalRoot() {
   String btnStyle = "style='font-size:16px;padding:10px 18px;border:none;border-radius:6px;cursor:pointer;background:#333;color:#fff'";
 
   if (cameraOn) {
-    page += "<a href='/capture'><button " + btnStyle + ">📸 Capture &amp; Send</button></a>";
+    page += "<a href='/relay/action?type=capture'><button " + btnStyle + ">📸 Capture &amp; Send</button></a>";
     page += "<a href='/af'><button " + btnStyle + ">🔍 Autofocus</button></a>";
     page += "<a href='/burst'><button " + btnStyle + ">🎞 Burst</button></a>";
     page += "<a href='/cam'><button style='font-size:16px;padding:10px 18px;border:none;border-radius:6px;cursor:pointer;background:#800;color:#fff'>🔴 Camera OFF</button></a>";
@@ -457,8 +489,9 @@ void handleLocalRoot() {
   }
 
   page += "<a href='/ping'><button " + btnStyle + ">🌐 Test App Server</button></a>";
-  page += "<a href='/next'><button " + btnStyle + ">⏭ Next</button></a>";
-  page += "<a href='/prev'><button " + btnStyle + ">⏮ Prev</button></a>";
+  page += "<a href='/relay/action?type=next'><button " + btnStyle + ">⏭ Next</button></a>";
+  page += "<a href='/relay/action?type=prev'><button " + btnStyle + ">⏮ Prev</button></a>";
+  page += "<a href='/relay/action?type=stop'><button " + btnStyle + ">⏹ Stop</button></a>";
   page += "</div>";
 
   // Button map
@@ -484,6 +517,10 @@ void handleLocalRoot() {
 
   page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip / rot</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
+  page += "<script>const H='https://" + String(SERVER_HOST) + "';const P='" + String(SERVER_PATH) + "';const D='" + String(DEVICE_ID) + "-browser-relay';";
+  page += "async function postCmd(t){let r=document.getElementById('relay');r.textContent='Relaying '+t+' to app...';let res=await fetch(H+P,{method:'POST',headers:{'Content-Type':'application/json','X-Device-Id':D},body:JSON.stringify({type:t,device_id:D})});r.textContent=res.ok?'✓ Relayed '+t:'✗ Relay '+t+' failed: HTTP '+res.status;}";
+  page += "async function postCap(){let r=document.getElementById('relay');r.textContent='Capturing high-res JPEG from ESP32...';let img=await fetch('/jpg',{cache:'no-store'});if(!img.ok){r.textContent='✗ ESP32 /jpg failed: HTTP '+img.status;return;}let b=await img.blob();r.textContent='Uploading '+Math.round(b.size/1024)+' KB to app...';let res=await fetch(H+P+'?type=capture',{method:'POST',headers:{'Content-Type':'image/jpeg','X-Device-Id':D},body:b});r.textContent=res.ok?'✓ Capture uploaded. Check the app for the answer.':'✗ Upload failed: HTTP '+res.status;}";
+  page += "async function pollRelay(){try{let q=await fetch('/relay/pop',{cache:'no-store'});let j=await q.json();if(j.action){if(j.action==='capture')await postCap();else await postCmd(j.action);}}catch(e){let r=document.getElementById('relay');if(r)r.textContent='Relay waiting: '+e.message;}}setInterval(pollRelay,700);pollRelay();</script>";
   page += "</body>";
 
   localServer.send(200, "text/html", page);
@@ -591,6 +628,23 @@ void handleLocalCam() {
   localServer.send(302, "text/plain", "Redirecting...");
 }
 
+void handleLocalRelayPop() {
+  String action = popBrowserRelay();
+  localServer.sendHeader("Access-Control-Allow-Origin", "*");
+  localServer.send(200, "application/json", String("{\"action\":\"") + action + "\",\"queued\":" + String(relayCount) + "}");
+}
+
+void handleLocalRelayAction() {
+  String type = localServer.arg("type");
+  if (type != "capture" && type != "next" && type != "prev" && type != "stop" && type != "replay") {
+    localServer.send(400, "text/plain", "bad relay action");
+    return;
+  }
+  queueBrowserRelay(type.c_str());
+  localServer.sendHeader("Location", "/");
+  localServer.send(302, "text/plain", "Queued for browser relay");
+}
+
 void startLocalDashboard() {
   localServer.on("/",        handleLocalRoot);
   localServer.on("/jpg",     handleLocalJpg);
@@ -599,6 +653,8 @@ void startLocalDashboard() {
   localServer.on("/ping",    handleLocalPing);
   localServer.on("/af",      handleLocalAf);
   localServer.on("/cam",     handleLocalCam);
+  localServer.on("/relay/pop", handleLocalRelayPop);
+  localServer.on("/relay/action", handleLocalRelayAction);
   localServer.on("/burst", []() {
     if (!cameraOn) {
       localServer.send(200, "text/html", "<p>Camera is OFF. <a href='/cam'>Turn it on</a> first.</p><p><a href='/'>Back</a></p>");
@@ -778,6 +834,15 @@ bool postCommand(const char* type) {
   respBody.replace("\n", " "); respBody.replace("\r", " ");
   Serial.printf("POST %s -> HTTP %d  %s\n", type, code, respBody.c_str());
   return code >= 200 && code < 300;
+}
+
+bool sendCommandSmart(const char* type) {
+#if BROWSER_RELAY_FIRST
+  queueBrowserRelay(type);
+  return true;
+#else
+  return postCommand(type);
+#endif
 }
 
 bool checkServer() {

@@ -1715,6 +1715,7 @@ void printAudit() {
 }
 
 static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
+static bool runtimeFlip   = VFLIP;
 
 void handleSerial() {
   static String line;
@@ -1742,6 +1743,19 @@ void handleSerial() {
           sensor_t* s = esp_camera_sensor_get();
           if (s) s->set_hmirror(s, runtimeMirror ? 1 : 0);
           Serial.printf("hmirror = %d\n", runtimeMirror ? 1 : 0);
+        }
+      }
+      else if (line.equalsIgnoreCase("rot"))       {
+        if (!cameraOn) { Serial.println("Camera is OFF — turn it on first (cam)"); }
+        else {
+          runtimeMirror = !runtimeMirror;
+          runtimeFlip   = !runtimeFlip;
+          sensor_t* s = esp_camera_sensor_get();
+          if (s) {
+            s->set_hmirror(s, runtimeMirror ? 1 : 0);
+            s->set_vflip(s, runtimeFlip ? 1 : 0);
+          }
+          Serial.printf("rotation toggled: hmirror=%d vflip=%d\n", runtimeMirror ? 1 : 0, runtimeFlip ? 1 : 0);
         }
       }
       else if (line.equalsIgnoreCase("calibrate")) {
@@ -1786,7 +1800,7 @@ void handleSerial() {
         Serial.println("[wiz] /wizlog.txt cleared");
       }
       else if (line.length() > 0) {
-        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip wizard wizshow wizreset)\n",
+        Serial.printf("[serial] unknown: %s  (try: ping cap burst next prev ring af audit calibrate cam flip rot wizard wizshow wizreset)\n",
                       line.c_str());
       }
       line = "";

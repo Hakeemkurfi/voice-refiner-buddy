@@ -20,9 +20,19 @@ export function useTtsQueue() {
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const manualStopRef = useRef(false);
+  const currentItemIdxRef = useRef(0);
+  const stepIdxRef = useRef(0);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
   const tokenRef = useRef(0); // cancels stale playbacks
   const useBackendTtsRef = useRef(false); // urgent mode: free browser speech, no paid TTS credits
+
+  useEffect(() => {
+    currentItemIdxRef.current = currentItemIdx;
+  }, [currentItemIdx]);
+
+  useEffect(() => {
+    stepIdxRef.current = stepIdx;
+  }, [stepIdx]);
 
   useEffect(() => {
     const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
@@ -125,6 +135,8 @@ export function useTtsQueue() {
       const playIdx = (k: number) => {
         if (k >= flat.length) return;
         const cur = flat[k];
+        currentItemIdxRef.current = cur.itemIdx;
+        stepIdxRef.current = cur.stepIdx;
         setCurrentItemIdx(cur.itemIdx);
         setStepIdx(cur.stepIdx);
         speak(cur.text, () => playIdx(k + 1));
@@ -141,6 +153,8 @@ export function useTtsQueue() {
         if (autoPlay) {
           setTimeout(() => {
             const newIi = next.length - 1;
+            currentItemIdxRef.current = newIi;
+            stepIdxRef.current = 0;
             setCurrentItemIdx(newIi);
             setStepIdx(0);
             const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
@@ -171,31 +185,35 @@ export function useTtsQueue() {
   }, []);
 
   const next = useCallback(() => {
-    const k = findFlatIdx(currentItemIdx, stepIdx);
+    const k = findFlatIdx(currentItemIdxRef.current, stepIdxRef.current);
     const flat = flatRef.current;
     if (k < 0 || k + 1 >= flat.length) return;
     stop();
     const n = flat[k + 1];
     setTimeout(() => playFrom(n.itemIdx, n.stepIdx), 80);
-  }, [currentItemIdx, stepIdx, findFlatIdx, stop, playFrom]);
+  }, [findFlatIdx, stop, playFrom]);
 
   const prev = useCallback(() => {
-    const k = findFlatIdx(currentItemIdx, stepIdx);
+    const ii = currentItemIdxRef.current;
+    const si = stepIdxRef.current;
+    const k = findFlatIdx(ii, si);
     if (k <= 0) {
       stop();
-      setTimeout(() => playFrom(currentItemIdx, stepIdx), 80);
+      setTimeout(() => playFrom(ii, si), 80);
       return;
     }
     const flat = flatRef.current;
     const p = flat[k - 1];
     stop();
     setTimeout(() => playFrom(p.itemIdx, p.stepIdx), 80);
-  }, [currentItemIdx, stepIdx, findFlatIdx, stop, playFrom]);
+  }, [findFlatIdx, stop, playFrom]);
 
   const replay = useCallback(() => {
+    const ii = currentItemIdxRef.current;
+    const si = stepIdxRef.current;
     stop();
-    setTimeout(() => playFrom(currentItemIdx, stepIdx), 80);
-  }, [currentItemIdx, stepIdx, stop, playFrom]);
+    setTimeout(() => playFrom(ii, si), 80);
+  }, [stop, playFrom]);
 
   // Media Session — lock-screen / earbud / Bluetooth-ring controls
   useEffect(() => {

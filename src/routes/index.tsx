@@ -140,7 +140,7 @@ function Index() {
 
   const handleCapture = useCallback(async (
     arg: { image_b64?: string; burst_id?: string },
-    model: "flash" | "pro" = "flash",
+    model: "flash" | "pro" | "auto" = "auto",
   ) => {
     setBusy(true);
     setError(null);
@@ -150,9 +150,9 @@ function Index() {
     sayStatus(
       arg.burst_id
         ? "Burst received. Reading the sharpest frames now."
-        : model === "pro"
+          : model === "pro"
           ? "Re-analyzing with the stronger model."
-          : "Picture received. I am analyzing it now.",
+            : "Picture received. I am reading and solving it now.",
     );
     try {
       const out = await analyze({
@@ -182,7 +182,7 @@ function Index() {
           ? `${out.modelUsed} • ${out.framesUsed} frames`
           : out.modelUsed ?? "",
       );
-      setStatus("Analysis ready. Reading the answer now.");
+      setStatus("Answer ready. Reading the solution now.");
     } catch (e) {
       const message = (e as Error).message;
       setError(message);
@@ -587,7 +587,7 @@ function Index() {
               <h2 className="font-semibold text-sm">📷 Snap or upload a photo (test without ESP32)</h2>
               <p className="text-xs text-muted-foreground mt-1">
                 Use your phone camera or pick a photo from the gallery. Same AI pipeline as the ESP32 —
-                great for testing voice quality and step-by-step dictation.
+                great for testing voice quality and step-by-step answers.
               </p>
             </div>
           </div>
@@ -623,7 +623,7 @@ function Index() {
             </label>
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Auto-resized to ~1600 px JPEG. Gemini vision reads the image first, then gives spoken solution steps.
+            Auto-resized to ~1600 px JPEG. The AI reads the image, solves the problem, and speaks the answer.
           </p>
         </Card>
 
@@ -639,8 +639,8 @@ function Index() {
             <div className="rounded-md border bg-muted/30 p-3">
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-2 font-semibold">ESP32 side (via BLE)</p>
               <ul className="text-xs space-y-1.5 font-mono">
-                <li><span className="inline-block w-28 font-bold text-primary">▲ Up</span>→ 🔁 Replay step</li>
-                <li><span className="inline-block w-28 font-bold text-primary">▼ Down</span>→ ⏹ Stop speech</li>
+                <li><span className="inline-block w-28 font-bold text-primary">▲ Up</span>→ ⏹ Stop speech</li>
+                <li><span className="inline-block w-28 font-bold text-primary">▼ Down</span>→ 🔴/🟢 Camera ON/OFF</li>
                 <li><span className="inline-block w-28 font-bold text-primary">◀ Left</span>→ ⏮ Previous step</li>
                 <li><span className="inline-block w-28 font-bold text-primary">▶ Right</span>→ ⏭ Next step</li>
                 <li><span className="inline-block w-28 font-bold text-primary">⏸ Mid (short)</span>→ 📸 Capture photo</li>
@@ -855,7 +855,7 @@ function Index() {
 
         {currentItem && (
           <Card className="p-4">
-            <h2 className="font-semibold mb-3">Steps</h2>
+              <h2 className="font-semibold mb-3">Answer / solution steps</h2>
             <ol className="space-y-2">
               {currentItem.steps.map((s, i) => (
                 <li
@@ -933,8 +933,7 @@ function Index() {
               <code className="bg-background px-1 rounded">cam</code> to toggle camera ON/OFF.
             </li>
             <li>
-              Open this page on your phone, tap <b>Enable audio</b>, connect your earbuds, then lock
-              the phone. Press the capture button on the ESP32 whenever you want to analyze something.
+              Open the ESP32 local dashboard and keep it open; it relays captures/buttons through your phone when ESP32 HTTPS fails.
             </li>
             <li>
               <a className="underline" href="/firmware/esp32_smart_camera.ino" download>

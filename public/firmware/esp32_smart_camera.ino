@@ -1,5 +1,5 @@
 /*
-  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.1
+  ESP32-S3-WROOM N16R8 CAM — Smart Audio Tutor firmware  v3.2
   ─────────────────────────────────────────────────────────────
   Board:            "ESP32S3 Dev Module"
   USB CDC On Boot:  "Enabled"
@@ -77,6 +77,10 @@ const char* DEVICE_ID     = "esp32-cam-01";
 #define UPLOAD_CHUNK_SIZE   4096
 #define IDLE_AF_INTERVAL_MS 8000
 #define HTTPS_CONNECT_RETRIES 3
+// Browser relay avoids the ESP32 TLS failure shown by your logs. Keep the
+// ESP32 local dashboard open; the phone/browser uploads captures and button
+// commands to the app over HTTPS, which works when ESP32 TLS cannot connect.
+#define BROWSER_RELAY_FIRST 1
 // ================================
 
 // ====== BURST CAPTURE ======
@@ -102,6 +106,37 @@ const char* RING_NAME_HINT = "S10";
 WebServer localServer(80);
 static bool runtimeMirror = HMIRROR;   // allow toggling at runtime
 static bool runtimeFlip   = VFLIP;
+
+// Browser relay queue: ring/hardware actions are stored here, then the local
+// dashboard page forwards them to the published HTTPS app from the phone.
+static String relayQueue[12];
+static uint8_t relayHead = 0;
+static uint8_t relayTail = 0;
+static uint8_t relayCount = 0;
+
+void queueBrowserRelay(const char* action) {
+  if (!action || !action[0]) return;
+  if (relayCount >= 12) {
+    Serial.println("[relay] queue full — dropping oldest action");
+    relayHead = (relayHead + 1) % 12;
+    relayCount--;
+  }
+  relayQueue[relayTail] = String(action);
+  relayTail = (relayTail + 1) % 12;
+  relayCount++;
+  Serial.printf("[relay] queued '%s' for browser dashboard. Keep http://%s/ open.\n",
+                action,
+                WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "ESP32-IP");
+}
+
+String popBrowserRelay() {
+  if (relayCount == 0) return "";
+  String action = relayQueue[relayHead];
+  relayQueue[relayHead] = "";
+  relayHead = (relayHead + 1) % 12;
+  relayCount--;
+  return action;
+}
 
 static bool tlsConnectWithRetry(WiFiClientSecure& client, const char* host, uint16_t port, const char* label) {
   IPAddress ip;
@@ -165,6 +200,9 @@ void initRingBle();
 void maintainRingBle();
 bool initCamera();
 void toggleCamera();
+void queueBrowserRelay(const char* action);
+bool sendCommandSmart(const char* type);
+bool captureSmart();
 
 // ----- Camera pin map (ESP32S3_WROOM_CAM) -----
 #define PWDN_GPIO_NUM     -1
@@ -418,6 +456,7 @@ void handleLocalRoot() {
   page += "<body style='font-family:Arial,sans-serif;margin:20px;line-height:1.6;background:#111;color:#eee'>";
   page += "<h2 style='color:#4af'>ESP32 Smart Audio Tutor v3</h2>";
   page += "<p>Live MJPEG preview — hold camera ~20–30 cm above A4 page, fill the frame, use bright even light.</p>";
+  page += "<p id='relay' style='background:#15351f;border:1px solid #286b3a;border-radius:8px;padding:10px;color:#b8ffc7'><b>Browser relay ON:</b> keep this page open. If ESP32 HTTPS fails, this phone/browser will upload captures and send prev/next/stop to the app.</p>";
   page += "<p style='color:#ffdb70;font-weight:bold'>v3.1 orientation is fixed for your latest upside-down sample: HMIRROR=1 and VFLIP=1. If it ever becomes upside down again, type <code>rot</code> in Serial.</p>";
 
   // Camera status indicator
@@ -427,10 +466,10 @@ void handleLocalRoot() {
   page += cameraOn ? "🟢 ON" : "🔴 OFF";
   page += "</p>";
 
-  // Stream (only show when camera is on)
+  // Preview (snapshot refresh instead of blocking MJPEG, so relay requests work)
   if (cameraOn) {
     page += "<div style='overflow:hidden;max-width:720px;border:2px solid #333;border-radius:8px;margin-bottom:12px'>";
-    page += "<img id='live' src='/stream' style='" + rotStyle + "border:none'>";
+    page += "<img id='live' src='/preview.jpg' style='" + rotStyle + "border:none'>";
     page += "</div>";
   } else {
     page += "<div style='width:100%;max-width:720px;height:200px;background:#222;border:2px solid #555;border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;color:#888'>Camera is OFF — click \"Camera ON\" to start preview</div>";
@@ -441,7 +480,7 @@ void handleLocalRoot() {
   String btnStyle = "style='font-size:16px;padding:10px 18px;border:none;border-radius:6px;cursor:pointer;background:#333;color:#fff'";
 
   if (cameraOn) {
-    page += "<a href='/capture'><button " + btnStyle + ">📸 Capture &amp; Send</button></a>";
+    page += "<a href='/relay/action?type=capture'><button " + btnStyle + ">📸 Capture &amp; Send</button></a>";
     page += "<a href='/af'><button " + btnStyle + ">🔍 Autofocus</button></a>";
     page += "<a href='/burst'><button " + btnStyle + ">🎞 Burst</button></a>";
     page += "<a href='/cam'><button style='font-size:16px;padding:10px 18px;border:none;border-radius:6px;cursor:pointer;background:#800;color:#fff'>🔴 Camera OFF</button></a>";
@@ -450,8 +489,9 @@ void handleLocalRoot() {
   }
 
   page += "<a href='/ping'><button " + btnStyle + ">🌐 Test App Server</button></a>";
-  page += "<a href='/next'><button " + btnStyle + ">⏭ Next</button></a>";
-  page += "<a href='/prev'><button " + btnStyle + ">⏮ Prev</button></a>";
+  page += "<a href='/relay/action?type=next'><button " + btnStyle + ">⏭ Next</button></a>";
+  page += "<a href='/relay/action?type=prev'><button " + btnStyle + ">⏮ Prev</button></a>";
+  page += "<a href='/relay/action?type=stop'><button " + btnStyle + ">⏹ Stop</button></a>";
   page += "</div>";
 
   // Button map
@@ -477,6 +517,11 @@ void handleLocalRoot() {
 
   page += "<p style='margin-top:16px;font-size:13px;color:#666'>Serial: ping / cap / burst / next / prev / ring / af / audit / calibrate / cam / flip / rot</p>";
   page += "<p>Open <b>https://" + String(SERVER_HOST) + "</b> on your phone and tap Enable audio.</p>";
+  page += "<script>const H='https://" + String(SERVER_HOST) + "';const P='" + String(SERVER_PATH) + "';const D='" + String(DEVICE_ID) + "-browser-relay';let relaying=false;";
+  page += "async function postCmd(t){let r=document.getElementById('relay');r.textContent='Relaying '+t+' to app...';let res=await fetch(H+P,{method:'POST',headers:{'Content-Type':'application/json','X-Device-Id':D},body:JSON.stringify({type:t,device_id:D})});r.textContent=res.ok?'✓ Relayed '+t:'✗ Relay '+t+' failed: HTTP '+res.status;}";
+  page += "async function postCap(){let r=document.getElementById('relay');r.textContent='Capturing high-res JPEG from ESP32...';let img=await fetch('/jpg',{cache:'no-store'});if(!img.ok){r.textContent='✗ ESP32 /jpg failed: HTTP '+img.status;return;}let b=await img.blob();r.textContent='Uploading '+Math.round(b.size/1024)+' KB to app...';let res=await fetch(H+P+'?type=capture',{method:'POST',headers:{'Content-Type':'image/jpeg','X-Device-Id':D},body:b});r.textContent=res.ok?'✓ Capture uploaded. Check the app for the answer.':'✗ Upload failed: HTTP '+res.status;}";
+  page += "async function pollRelay(){if(relaying)return;try{let q=await fetch('/relay/pop',{cache:'no-store'});let j=await q.json();if(j.action){relaying=true;if(j.action==='capture')await postCap();else await postCmd(j.action);relaying=false;}}catch(e){relaying=false;let r=document.getElementById('relay');if(r)r.textContent='Relay waiting: '+e.message;}}";
+  page += "function refreshPreview(){let img=document.getElementById('live');if(img&&!relaying)img.src='/preview.jpg?t='+Date.now();}setInterval(refreshPreview,900);setInterval(pollRelay,700);pollRelay();</script>";
   page += "</body>";
 
   localServer.send(200, "text/html", page);
@@ -551,14 +596,30 @@ void handleLocalJpg() {
   esp_camera_fb_return(fb);
 }
 
+void handleLocalPreviewJpg() {
+  if (!cameraOn) { localServer.send(503, "text/plain", "Camera is OFF."); return; }
+  sensor_t* s = esp_camera_sensor_get();
+  if (s) s->set_framesize(s, FRAMESIZE_VGA);
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) { localServer.send(500, "text/plain", "preview capture failed"); return; }
+  WiFiClient localClient = localServer.client();
+  localClient.print("HTTP/1.1 200 OK\r\n");
+  localClient.print("Content-Type: image/jpeg\r\n");
+  localClient.printf("Content-Length: %u\r\n", (unsigned)fb->len);
+  localClient.print("Cache-Control: no-store\r\n");
+  localClient.print("Connection: close\r\n\r\n");
+  localClient.write(fb->buf, fb->len);
+  esp_camera_fb_return(fb);
+}
+
 void handleLocalCapture() {
   if (!cameraOn) {
     localServer.send(200, "text/html", "<p>Camera is OFF. <a href='/cam'>Turn it on</a> first.</p><p><a href='/'>Back</a></p>");
     return;
   }
-  bool ok = captureAndSend();
+  bool ok = captureSmart();
   localServer.send(200, "text/html",
-    String("<p>") + (ok ? "✓ Capture sent to app." : "✗ Capture failed. Check Serial Monitor.") +
+    String("<p>") + (ok ? "✓ Capture queued/sent to app." : "✗ Capture failed. Check Serial Monitor.") +
     "</p><p><a href='/'>Back</a></p>");
 }
 
@@ -584,14 +645,34 @@ void handleLocalCam() {
   localServer.send(302, "text/plain", "Redirecting...");
 }
 
+void handleLocalRelayPop() {
+  String action = popBrowserRelay();
+  localServer.sendHeader("Access-Control-Allow-Origin", "*");
+  localServer.send(200, "application/json", String("{\"action\":\"") + action + "\",\"queued\":" + String(relayCount) + "}");
+}
+
+void handleLocalRelayAction() {
+  String type = localServer.arg("type");
+  if (type != "capture" && type != "next" && type != "prev" && type != "stop" && type != "replay") {
+    localServer.send(400, "text/plain", "bad relay action");
+    return;
+  }
+  queueBrowserRelay(type.c_str());
+  localServer.sendHeader("Location", "/");
+  localServer.send(302, "text/plain", "Queued for browser relay");
+}
+
 void startLocalDashboard() {
   localServer.on("/",        handleLocalRoot);
   localServer.on("/jpg",     handleLocalJpg);
+  localServer.on("/preview.jpg", handleLocalPreviewJpg);
   localServer.on("/stream",  handleLocalStream);
   localServer.on("/capture", handleLocalCapture);
   localServer.on("/ping",    handleLocalPing);
   localServer.on("/af",      handleLocalAf);
   localServer.on("/cam",     handleLocalCam);
+  localServer.on("/relay/pop", handleLocalRelayPop);
+  localServer.on("/relay/action", handleLocalRelayAction);
   localServer.on("/burst", []() {
     if (!cameraOn) {
       localServer.send(200, "text/html", "<p>Camera is OFF. <a href='/cam'>Turn it on</a> first.</p><p><a href='/'>Back</a></p>");
@@ -603,15 +684,15 @@ void startLocalDashboard() {
       "</p><p><a href='/'>Back</a></p>");
   });
   localServer.on("/next", []() {
-    bool ok = postCommand("next");
+    bool ok = sendCommandSmart("next");
     localServer.send(200, "text/html",
-      String("<p>") + (ok ? "✓ Next sent." : "✗ Next failed.") +
+      String("<p>") + (ok ? "✓ Next queued/sent." : "✗ Next failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
   localServer.on("/prev", []() {
-    bool ok = postCommand("prev");
+    bool ok = sendCommandSmart("prev");
     localServer.send(200, "text/html",
-      String("<p>") + (ok ? "✓ Prev sent." : "✗ Prev failed.") +
+      String("<p>") + (ok ? "✓ Prev queued/sent." : "✗ Prev failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
   auto serveWizlog = [](bool asDownload){
@@ -773,6 +854,15 @@ bool postCommand(const char* type) {
   return code >= 200 && code < 300;
 }
 
+bool sendCommandSmart(const char* type) {
+#if BROWSER_RELAY_FIRST
+  queueBrowserRelay(type);
+  return true;
+#else
+  return postCommand(type);
+#endif
+}
+
 bool checkServer() {
   WiFiClientSecure client;
   client.setInsecure();
@@ -826,7 +916,7 @@ void pollTrigger() {
       Serial.printf("[ring] trigger %s -> capturing\n", newId.c_str());
       lastTriggerId = newId;
       http.end();
-      if (cameraOn) captureAndSend();
+      if (cameraOn) captureSmart();
       else Serial.println("[ring] trigger ignored — camera is OFF");
       return;
     } else if (newId.length() > 0) {
@@ -918,15 +1008,15 @@ void ringAction(const char* action) {
                 ringConnected ? "YES" : "NO",
                 cameraOn      ? "ON"  : "OFF");
 
-  if      (!strcmp(action, "capture"))       { if (cameraOn) captureAndSend(); else Serial.println("  >> Camera is OFF — long-press middle to turn it ON first"); }
+  if      (!strcmp(action, "capture"))       { if (cameraOn) captureSmart(); else Serial.println("  >> Camera is OFF — press DOWN / cam to turn it ON first"); }
   else if (!strcmp(action, "camera_toggle")) toggleCamera();
-  else if (!strcmp(action, "burst"))         { if (cameraOn) runBurst(); else Serial.println("  >> Camera is OFF"); }
-  else if (!strcmp(action, "single"))        { if (cameraOn) captureAndSend(); else Serial.println("  >> Camera is OFF"); }
-  else if (!strcmp(action, "next"))          postCommand("next");
-  else if (!strcmp(action, "prev"))          postCommand("prev");
-  else if (!strcmp(action, "replay"))        postCommand("replay");
-  else if (!strcmp(action, "stop"))          postCommand("stop");
-  else if (!strcmp(action, "up_stop"))       postCommand("stop");
+  else if (!strcmp(action, "burst"))         { if (cameraOn) queueBrowserRelay("capture"); else Serial.println("  >> Camera is OFF"); }
+  else if (!strcmp(action, "single"))        { if (cameraOn) captureSmart(); else Serial.println("  >> Camera is OFF"); }
+  else if (!strcmp(action, "next"))          sendCommandSmart("next");
+  else if (!strcmp(action, "prev"))          sendCommandSmart("prev");
+  else if (!strcmp(action, "replay"))        sendCommandSmart("replay");
+  else if (!strcmp(action, "stop"))          sendCommandSmart("stop");
+  else if (!strcmp(action, "up_stop"))       sendCommandSmart("stop");
   else if (!strcmp(action, "down_cam"))      toggleCamera();
 }
 
@@ -1662,6 +1752,20 @@ bool captureAndSend() {
   return ok;
 }
 
+bool captureSmart() {
+#if BROWSER_RELAY_FIRST
+  if (!cameraOn) {
+    Serial.println("[relay] capture not queued — camera is OFF.");
+    return false;
+  }
+  queueBrowserRelay("capture");
+  Serial.println("[relay] capture queued. Keep the ESP32 dashboard open; browser will fetch /jpg and upload.");
+  return true;
+#else
+  return captureAndSend();
+#endif
+}
+
 
 // ============================================================
 //  HARDWARE BUTTONS
@@ -1741,10 +1845,10 @@ void handleSerial() {
     if (c == '\n') {
       line.trim();
       if      (line.equalsIgnoreCase("ping"))      { Serial.println("[serial] ping");  checkServer(); }
-      else if (line.equalsIgnoreCase("cap"))        { Serial.println("[serial] cap");   Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED"); }
+      else if (line.equalsIgnoreCase("cap"))        { Serial.println("[serial] cap");   Serial.println(captureSmart() ? "✓ Capture queued/sent" : "✗ Capture FAILED"); }
       else if (line.equalsIgnoreCase("burst"))      { Serial.println("[serial] burst"); runBurst(); }
-      else if (line.equalsIgnoreCase("next"))       { postCommand("next"); }
-      else if (line.equalsIgnoreCase("prev"))       { postCommand("prev"); }
+      else if (line.equalsIgnoreCase("next"))       { sendCommandSmart("next"); }
+      else if (line.equalsIgnoreCase("prev"))       { sendCommandSmart("prev"); }
       else if (line.equalsIgnoreCase("ring"))       { printRingStatus(); }
       else if (line.equalsIgnoreCase("af"))         {
         sensor_t* s = esp_camera_sensor_get();
@@ -1872,10 +1976,10 @@ void loop() {
 
   if (pressed(CAPTURE_BTN, &capState,  &capT))  {
     Serial.println("[BTN] CAPTURE pressed");
-    Serial.println(captureAndSend() ? "✓ Capture sent" : "✗ Capture FAILED");
+    Serial.println(captureSmart() ? "✓ Capture queued/sent" : "✗ Capture FAILED");
   }
-  if (pressed(NEXT_BTN, &nextState, &nextT)) { Serial.println("[BTN] NEXT");  postCommand("next"); }
-  if (pressed(PREV_BTN, &prevState, &prevT)) { Serial.println("[BTN] PREV");  postCommand("prev"); }
+  if (pressed(NEXT_BTN, &nextState, &nextT)) { Serial.println("[BTN] NEXT");  sendCommandSmart("next"); }
+  if (pressed(PREV_BTN, &prevState, &prevT)) { Serial.println("[BTN] PREV");  sendCommandSmart("prev"); }
 
   maintainRingBle();   // always — pair the ring even with WiFi down
   idlePreFocus();

@@ -135,6 +135,8 @@ export function useTtsQueue() {
       const playIdx = (k: number) => {
         if (k >= flat.length) return;
         const cur = flat[k];
+        currentItemIdxRef.current = cur.itemIdx;
+        stepIdxRef.current = cur.stepIdx;
         setCurrentItemIdx(cur.itemIdx);
         setStepIdx(cur.stepIdx);
         speak(cur.text, () => playIdx(k + 1));
@@ -151,6 +153,8 @@ export function useTtsQueue() {
         if (autoPlay) {
           setTimeout(() => {
             const newIi = next.length - 1;
+            currentItemIdxRef.current = newIi;
+            stepIdxRef.current = 0;
             setCurrentItemIdx(newIi);
             setStepIdx(0);
             const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];

@@ -617,9 +617,9 @@ void handleLocalCapture() {
     localServer.send(200, "text/html", "<p>Camera is OFF. <a href='/cam'>Turn it on</a> first.</p><p><a href='/'>Back</a></p>");
     return;
   }
-  bool ok = captureAndSend();
+  bool ok = captureSmart();
   localServer.send(200, "text/html",
-    String("<p>") + (ok ? "✓ Capture sent to app." : "✗ Capture failed. Check Serial Monitor.") +
+    String("<p>") + (ok ? "✓ Capture queued/sent to app." : "✗ Capture failed. Check Serial Monitor.") +
     "</p><p><a href='/'>Back</a></p>");
 }
 
@@ -684,15 +684,15 @@ void startLocalDashboard() {
       "</p><p><a href='/'>Back</a></p>");
   });
   localServer.on("/next", []() {
-    bool ok = postCommand("next");
+    bool ok = sendCommandSmart("next");
     localServer.send(200, "text/html",
-      String("<p>") + (ok ? "✓ Next sent." : "✗ Next failed.") +
+      String("<p>") + (ok ? "✓ Next queued/sent." : "✗ Next failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
   localServer.on("/prev", []() {
-    bool ok = postCommand("prev");
+    bool ok = sendCommandSmart("prev");
     localServer.send(200, "text/html",
-      String("<p>") + (ok ? "✓ Prev sent." : "✗ Prev failed.") +
+      String("<p>") + (ok ? "✓ Prev queued/sent." : "✗ Prev failed.") +
       "</p><p><a href='/'>Back</a></p>");
   });
   auto serveWizlog = [](bool asDownload){
@@ -916,7 +916,7 @@ void pollTrigger() {
       Serial.printf("[ring] trigger %s -> capturing\n", newId.c_str());
       lastTriggerId = newId;
       http.end();
-      if (cameraOn) captureAndSend();
+      if (cameraOn) captureSmart();
       else Serial.println("[ring] trigger ignored — camera is OFF");
       return;
     } else if (newId.length() > 0) {

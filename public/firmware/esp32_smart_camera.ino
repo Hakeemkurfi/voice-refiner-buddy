@@ -814,7 +814,7 @@ static bool   calibrateMode            = false;
 static bool   wizMode      = false;
 static int    wizStep      = 0;          // 0=middle 1=left 2=right 3=up 4=down 5=done
 static const char* WIZ_NAMES[5] = { "MIDDLE", "LEFT", "RIGHT", "UP", "DOWN" };
-static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "replay", "stop" };
+static const char* WIZ_ACT  [5] = { "capture", "prev", "next", "stop", "camera_toggle" };
 static uint8_t wizCounts[5][256];        // [step][d1] = report count (legacy)
 static uint8_t wizFinal [5];             // recorded d[1] per step
 static bool    wizHas   [5];             // recorded flag

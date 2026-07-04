@@ -24,7 +24,7 @@ export function useTtsQueue() {
   const stepIdxRef = useRef(0);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
   const tokenRef = useRef(0); // cancels stale playbacks
-  const useBackendTtsRef = useRef(false); // urgent mode: free browser speech, no paid TTS credits
+  const useBackendTtsRef = useRef(true); // real MP3 audio for lock-screen playback + seeking
 
   useEffect(() => {
     currentItemIdxRef.current = currentItemIdx;
@@ -184,25 +184,42 @@ export function useTtsQueue() {
     setSpeaking(false);
   }, []);
 
+  // NEXT = skip to next QUESTION (item). Loops back to first item at end.
   const next = useCallback(() => {
-    const k = findFlatIdx(currentItemIdxRef.current, stepIdxRef.current);
     const flat = flatRef.current;
-    if (k < 0 || k + 1 >= flat.length) return;
+    if (flat.length === 0) return;
+    const curItem = currentItemIdxRef.current;
+    // find first flat entry belonging to next item
+    let targetItem = curItem + 1;
+    const totalItems = items.length;
+    if (targetItem >= totalItems) targetItem = 0; // loop
+    const jump = flat.find((f) => f.itemIdx === targetItem);
+    if (!jump) return;
     stop();
-    const n = flat[k + 1];
-    setTimeout(() => playFrom(n.itemIdx, n.stepIdx), 80);
-  }, [findFlatIdx, stop, playFrom]);
+    setTimeout(() => playFrom(jump.itemIdx, jump.stepIdx), 80);
+  }, [items.length, stop, playFrom]);
 
+  // PREV = seek back 10 seconds inside the current audio (memorization rewind).
+  // If the current audio has no seekable position (short clip / speech-synth),
+  // fall back to previous spoken step.
   const prev = useCallback(() => {
+    const a = audioRef.current;
+    if (a && !a.paused && Number.isFinite(a.currentTime) && a.currentTime > 0.5) {
+      const target = Math.max(0, a.currentTime - 10);
+      try {
+        a.currentTime = target;
+        return;
+      } catch { /* fall through */ }
+    }
     const ii = currentItemIdxRef.current;
     const si = stepIdxRef.current;
     const k = findFlatIdx(ii, si);
+    const flat = flatRef.current;
     if (k <= 0) {
       stop();
       setTimeout(() => playFrom(ii, si), 80);
       return;
     }
-    const flat = flatRef.current;
     const p = flat[k - 1];
     stop();
     setTimeout(() => playFrom(p.itemIdx, p.stepIdx), 80);
@@ -214,6 +231,27 @@ export function useTtsQueue() {
     stop();
     setTimeout(() => playFrom(ii, si), 80);
   }, [stop, playFrom]);
+
+  // Pause / resume without destroying position — used by lock-screen play/pause
+  // and the "stop / continue" ring button.
+  const pauseResume = useCallback(() => {
+    const a = audioRef.current;
+    if (a && !a.paused) {
+      manualStopRef.current = true;
+      try { a.pause(); } catch { /* ignore */ }
+      setSpeaking(false);
+      return;
+    }
+    if (a && a.src && a.currentTime > 0 && a.currentTime < (a.duration || Infinity)) {
+      manualStopRef.current = false;
+      a.play().then(() => setSpeaking(true)).catch(() => { /* ignore */ });
+      return;
+    }
+    // Nothing paused — replay current step
+    const ii = currentItemIdxRef.current;
+    const si = stepIdxRef.current;
+    setTimeout(() => playFrom(ii, si), 60);
+  }, [playFrom]);
 
   // Media Session — lock-screen / earbud / Bluetooth-ring controls
   useEffect(() => {
@@ -229,13 +267,13 @@ export function useTtsQueue() {
     const bind = (action: MediaSessionAction, fn: () => void) => {
       try { ms.setActionHandler(action, fn); } catch { /* unsupported */ }
     };
-    bind("play", replay);
-    bind("pause", stop);
+    bind("play", pauseResume);
+    bind("pause", pauseResume);
     bind("nexttrack", next);
     bind("previoustrack", prev);
-    bind("seekbackward", replay);
+    bind("seekbackward", prev);
     bind("seekforward", next);
-  }, [items, currentItemIdx, stepIdx, speaking, next, prev, replay, stop]);
+  }, [items, currentItemIdx, stepIdx, speaking, next, prev, replay, stop, pauseResume]);
 
   return {
     items,
@@ -250,5 +288,6 @@ export function useTtsQueue() {
     prev,
     replay,
     stop,
+    pauseResume,
   };
 }

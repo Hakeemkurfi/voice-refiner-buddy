@@ -496,27 +496,95 @@ function Index() {
     return jpegs;
   };
 
+  // ── PDF audio tracks (ready-made per page) ─────────────────────────────
+  type PdfTrack = { id: string; title: string; url: string; text: string; bytes: number };
+  const [pdfTracks, setPdfTracks] = useState<PdfTrack[]>([]);
+
+  const stepsToSpeech = (steps: string[]): string => {
+    // Join into natural spoken paragraphs, add pauses between steps
+    return steps
+      .map((s) => s.trim().replace(/\s+/g, " "))
+      .filter(Boolean)
+      .join(". ")
+      .replace(/\.\.+/g, ".");
+  };
+
+  // OpenAI TTS input cap is ~4096 chars. Split at sentence boundary under 3400.
+  const chunkTextForTts = (text: string, max = 3400): string[] => {
+    if (text.length <= max) return [text];
+    const sentences = text.match(/[^.!?]+[.!?]+\s*/g) ?? [text];
+    const chunks: string[] = [];
+    let cur = "";
+    for (const s of sentences) {
+      if ((cur + s).length > max && cur) {
+        chunks.push(cur.trim());
+        cur = "";
+      }
+      cur += s;
+    }
+    if (cur.trim()) chunks.push(cur.trim());
+    return chunks;
+  };
+
+  const fetchTtsMp3 = async (text: string): Promise<Blob> => {
+    // If text needs chunking, fetch each chunk and concatenate MP3 bytes
+    // (MP3 frames concat naturally — most players accept this).
+    const chunks = chunkTextForTts(text);
+    const blobs: Blob[] = [];
+    for (const c of chunks) {
+      const res = await fetch("/api/public/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: c, voice: "sage", speed: 0.95 }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`TTS ${res.status}: ${txt.slice(0, 160)}`);
+      }
+      blobs.push(await res.blob());
+    }
+    return new Blob(blobs, { type: "audio/mpeg" });
+  };
+
   const onPickPdf = async (file: File | null) => {
     if (!file) return;
-    if (!audioUnlocked) {
-      setError("Tap 'Enable audio' at the top first, then upload the PDF.");
-      return;
-    }
     setPdfBusy(true);
     setError(null);
+    setPdfTracks([]);
     try {
       setStatus(`Reading PDF "${file.name}"…`);
       const pages = await renderPdfToJpegs(file, (n, total) => {
         setPdfProgress({ done: n, total });
         setStatus(`Rendering PDF page ${n} of ${total}…`);
       });
-      setStatus(`PDF has ${pages.length} page(s). Analyzing and speaking now.`);
+      setStatus(`PDF has ${pages.length} page(s). Solving each and building audio tracks.`);
       for (let i = 0; i < pages.length; i++) {
         setPdfProgress({ done: i + 1, total: pages.length });
-        setStatus(`Solving PDF page ${i + 1} of ${pages.length}…`);
-        await handleCapture({ image_b64: pages[i] }, "flash");
+        setStatus(`Page ${i + 1}/${pages.length}: solving with AI…`);
+        const out = await analyze({
+          data: {
+            image_b64: pages[i],
+            contextText: contextRef.current,
+            model: "flash",
+          },
+        });
+        const spoken = stepsToSpeech(out.steps ?? []);
+        if (!spoken) continue;
+        setStatus(`Page ${i + 1}/${pages.length}: generating audio…`);
+        const blob = await fetchTtsMp3(spoken);
+        const url = URL.createObjectURL(blob);
+        setPdfTracks((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            title: `Page ${i + 1} — ${out.title ?? "Solution"}`,
+            url,
+            text: spoken,
+            bytes: blob.size,
+          },
+        ]);
       }
-      setStatus("PDF finished. Use the ring or on-screen buttons to navigate.");
+      setStatus(`PDF finished. ${pages.length} audio track(s) ready below.`);
     } catch (e) {
       setError(`PDF failed: ${(e as Error).message}`);
     } finally {
@@ -524,6 +592,7 @@ function Index() {
       setPdfProgress(null);
     }
   };
+
 
   const testCapture = async () => {
     const dummy =
@@ -729,9 +798,61 @@ function Index() {
             />
           </label>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Tip: enable audio first, then start the PDF. Playback continues even if you lock the screen.
+            Each page becomes a ready-made MP3 you can play, pause, seek, and skip below.
+            Works with the standard media controls on your phone lock screen and Bluetooth ring.
           </p>
+
+          {pdfTracks.length > 0 && (
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  🎧 {pdfTracks.length} ready audio track(s)
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    pdfTracks.forEach((t) => URL.revokeObjectURL(t.url));
+                    setPdfTracks([]);
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
+              {pdfTracks.map((t, i) => (
+                <div key={t.id} className="rounded-md border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-sm font-medium truncate">{t.title}</p>
+                    <a
+                      href={t.url}
+                      download={`pdf-page-${i + 1}.mp3`}
+                      className="text-[10px] text-primary underline shrink-0"
+                    >
+                      Download
+                    </a>
+                  </div>
+                  <audio
+                    controls
+                    preload="metadata"
+                    src={t.url}
+                    className="w-full"
+                    onPlay={(e) => {
+                      // Pause any other tracks so only one plays at a time
+                      document.querySelectorAll("audio").forEach((a) => {
+                        if (a !== e.currentTarget) a.pause();
+                      });
+                    }}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    {(t.bytes / 1024).toFixed(0)} KB • {t.text.length} chars spoken
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
+
 
 
         {/* ── S10 Ring map (v3) ───────────────────────────────────────────── */}

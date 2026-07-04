@@ -58,6 +58,7 @@ function Index() {
     prev: playPrev,
     replay: replayTts,
     stop: stopTts,
+    pauseResume: pauseResumeTts,
   } = tts;
   const analyze = useServerFn(analyzeImage);
   const [realtimeOnline, setRealtimeOnline] = useState(false);

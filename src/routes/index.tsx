@@ -496,27 +496,95 @@ function Index() {
     return jpegs;
   };
 
+  // ── PDF audio tracks (ready-made per page) ─────────────────────────────
+  type PdfTrack = { id: string; title: string; url: string; text: string; bytes: number };
+  const [pdfTracks, setPdfTracks] = useState<PdfTrack[]>([]);
+
+  const stepsToSpeech = (steps: string[]): string => {
+    // Join into natural spoken paragraphs, add pauses between steps
+    return steps
+      .map((s) => s.trim().replace(/\s+/g, " "))
+      .filter(Boolean)
+      .join(". ")
+      .replace(/\.\.+/g, ".");
+  };
+
+  // OpenAI TTS input cap is ~4096 chars. Split at sentence boundary under 3400.
+  const chunkTextForTts = (text: string, max = 3400): string[] => {
+    if (text.length <= max) return [text];
+    const sentences = text.match(/[^.!?]+[.!?]+\s*/g) ?? [text];
+    const chunks: string[] = [];
+    let cur = "";
+    for (const s of sentences) {
+      if ((cur + s).length > max && cur) {
+        chunks.push(cur.trim());
+        cur = "";
+      }
+      cur += s;
+    }
+    if (cur.trim()) chunks.push(cur.trim());
+    return chunks;
+  };
+
+  const fetchTtsMp3 = async (text: string): Promise<Blob> => {
+    // If text needs chunking, fetch each chunk and concatenate MP3 bytes
+    // (MP3 frames concat naturally — most players accept this).
+    const chunks = chunkTextForTts(text);
+    const blobs: Blob[] = [];
+    for (const c of chunks) {
+      const res = await fetch("/api/public/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: c, voice: "sage", speed: 0.95 }),
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`TTS ${res.status}: ${txt.slice(0, 160)}`);
+      }
+      blobs.push(await res.blob());
+    }
+    return new Blob(blobs, { type: "audio/mpeg" });
+  };
+
   const onPickPdf = async (file: File | null) => {
     if (!file) return;
-    if (!audioUnlocked) {
-      setError("Tap 'Enable audio' at the top first, then upload the PDF.");
-      return;
-    }
     setPdfBusy(true);
     setError(null);
+    setPdfTracks([]);
     try {
       setStatus(`Reading PDF "${file.name}"…`);
       const pages = await renderPdfToJpegs(file, (n, total) => {
         setPdfProgress({ done: n, total });
         setStatus(`Rendering PDF page ${n} of ${total}…`);
       });
-      setStatus(`PDF has ${pages.length} page(s). Analyzing and speaking now.`);
+      setStatus(`PDF has ${pages.length} page(s). Solving each and building audio tracks.`);
       for (let i = 0; i < pages.length; i++) {
         setPdfProgress({ done: i + 1, total: pages.length });
-        setStatus(`Solving PDF page ${i + 1} of ${pages.length}…`);
-        await handleCapture({ image_b64: pages[i] }, "flash");
+        setStatus(`Page ${i + 1}/${pages.length}: solving with AI…`);
+        const out = await analyze({
+          data: {
+            image_b64: pages[i],
+            contextText: contextRef.current,
+            model: "flash",
+          },
+        });
+        const spoken = stepsToSpeech(out.steps ?? []);
+        if (!spoken) continue;
+        setStatus(`Page ${i + 1}/${pages.length}: generating audio…`);
+        const blob = await fetchTtsMp3(spoken);
+        const url = URL.createObjectURL(blob);
+        setPdfTracks((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            title: `Page ${i + 1} — ${out.title ?? "Solution"}`,
+            url,
+            text: spoken,
+            bytes: blob.size,
+          },
+        ]);
       }
-      setStatus("PDF finished. Use the ring or on-screen buttons to navigate.");
+      setStatus(`PDF finished. ${pages.length} audio track(s) ready below.`);
     } catch (e) {
       setError(`PDF failed: ${(e as Error).message}`);
     } finally {
@@ -524,6 +592,7 @@ function Index() {
       setPdfProgress(null);
     }
   };
+
 
   const testCapture = async () => {
     const dummy =

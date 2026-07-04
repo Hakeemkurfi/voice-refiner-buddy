@@ -499,6 +499,51 @@ function Index() {
   // ── PDF audio tracks (ready-made per page) ─────────────────────────────
   type PdfTrack = { id: string; title: string; url: string; text: string; bytes: number };
   const [pdfTracks, setPdfTracks] = useState<PdfTrack[]>([]);
+  const [playingPdfIdx, setPlayingPdfIdx] = useState<number | null>(null);
+  const pdfAudioRefs = useRef<(HTMLAudioElement | null)[]>([]);
+  const pdfTracksRef = useRef<PdfTrack[]>([]);
+  useEffect(() => { pdfTracksRef.current = pdfTracks; }, [pdfTracks]);
+
+  const playPdfTrackAt = useCallback((idx: number) => {
+    const tracks = pdfTracksRef.current;
+    if (idx < 0 || idx >= tracks.length) return;
+    pdfAudioRefs.current.forEach((a, i) => { if (a && i !== idx) { try { a.pause(); } catch { /* ignore */ } } });
+    const a = pdfAudioRefs.current[idx];
+    if (a) a.play().catch(() => { /* ignore */ });
+  }, []);
+
+  const bindMediaSessionToPdf = useCallback((idx: number) => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    const t = pdfTracksRef.current[idx];
+    if (!t) return;
+    try {
+      ms.metadata = new MediaMetadata({
+        title: t.title,
+        artist: `Track ${idx + 1} of ${pdfTracksRef.current.length}`,
+        album: "Smart Audio Tutor — PDF",
+      });
+      ms.playbackState = "playing";
+      ms.setActionHandler("play", () => { const a = pdfAudioRefs.current[idx]; a?.play().catch(() => {}); });
+      ms.setActionHandler("pause", () => { const a = pdfAudioRefs.current[idx]; a?.pause(); });
+      ms.setActionHandler("nexttrack", () => {
+        const n = idx + 1 < pdfTracksRef.current.length ? idx + 1 : 0;
+        playPdfTrackAt(n);
+      });
+      ms.setActionHandler("previoustrack", () => {
+        const p = idx - 1 >= 0 ? idx - 1 : pdfTracksRef.current.length - 1;
+        playPdfTrackAt(p);
+      });
+      ms.setActionHandler("seekbackward", (d) => {
+        const a = pdfAudioRefs.current[idx];
+        if (a) a.currentTime = Math.max(0, a.currentTime - (d.seekOffset ?? 10));
+      });
+      ms.setActionHandler("seekforward", (d) => {
+        const a = pdfAudioRefs.current[idx];
+        if (a) a.currentTime = Math.min(a.duration || 0, a.currentTime + (d.seekOffset ?? 10));
+      });
+    } catch { /* ignore */ }
+  }, [playPdfTrackAt]);
 
   const stepsToSpeech = (steps: string[]): string => {
     // Join into natural spoken paragraphs, add pauses between steps

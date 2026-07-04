@@ -251,6 +251,14 @@ function isWeakResult(p: Parsed): boolean {
     joined.includes("too blurry") ||
     joined.includes("could not read")
   ) return true;
+  // SOLVE ENFORCEMENT: if the page clearly contains questions but the steps
+  // never state an answer/result, treat as weak (model only transcribed).
+  const looksLikeQuestions =
+    /(?:^|\n)\s*(?:\d+[.)]|\(\d+\)|question)/i.test(text) ||
+    /[?？]/.test(text);
+  const hasSolution =
+    /the answer is|answer:|option [a-e]\b|therefore|equals|is correct|so the/i.test(joined);
+  if (looksLikeQuestions && (p.steps ?? []).length > 0 && !hasSolution) return true;
   return false;
 }
 

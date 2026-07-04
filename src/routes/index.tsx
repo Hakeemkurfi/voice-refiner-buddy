@@ -250,11 +250,11 @@ function Index() {
         setStatus("Replay command received from ESP32.");
         replayTts();
       } else if (row.type === "stop") {
-        setStatus("Stop command received from ESP32.");
-        stopTts();
+        setStatus("Stop/continue toggle from ESP32.");
+        pauseResumeTts();
       }
     },
-    [handleCapture, playNext, playPrev, replayTts, sayStatus, stopTts],
+    [handleCapture, playNext, playPrev, replayTts, sayStatus, stopTts, pauseResumeTts],
   );
 
   const checkServer = useCallback(async () => {

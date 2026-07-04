@@ -849,22 +849,36 @@ function Index() {
 
           {pdfTracks.length > 0 && (
             <div className="mt-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   🎧 {pdfTracks.length} ready audio track(s)
                 </p>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs"
-                  onClick={() => {
-                    pdfTracks.forEach((t) => URL.revokeObjectURL(t.url));
-                    setPdfTracks([]);
-                  }}
-                >
-                  Clear
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => playPdfTrackAt(0)}
+                  >
+                    ▶ Play all
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      pdfTracks.forEach((t) => URL.revokeObjectURL(t.url));
+                      setPdfTracks([]);
+                      setPlayingPdfIdx(null);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
               </div>
+              <p className="text-[10px] text-muted-foreground -mt-1">
+                Tap ▶ Play all, then lock your phone. Your Bluetooth ring's play/pause/next/prev buttons
+                will control these tracks from the lock screen. Each page auto-advances to the next.
+              </p>
               {pdfTracks.map((t, i) => (
                 <div key={t.id} className={`rounded-md border p-3 ${playingPdfIdx === i ? "bg-primary/10 border-primary/40" : "bg-muted/20"}`}>
                   <div className="flex items-center justify-between gap-2 mb-2">

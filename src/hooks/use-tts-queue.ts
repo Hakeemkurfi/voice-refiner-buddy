@@ -24,7 +24,7 @@ export function useTtsQueue() {
   const stepIdxRef = useRef(0);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
   const tokenRef = useRef(0); // cancels stale playbacks
-  const useBackendTtsRef = useRef(false); // urgent mode: free browser speech, no paid TTS credits
+  const useBackendTtsRef = useRef(true); // real MP3 audio for lock-screen playback + seeking
 
   useEffect(() => {
     currentItemIdxRef.current = currentItemIdx;

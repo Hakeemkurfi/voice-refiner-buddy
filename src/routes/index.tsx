@@ -499,6 +499,51 @@ function Index() {
   // ── PDF audio tracks (ready-made per page) ─────────────────────────────
   type PdfTrack = { id: string; title: string; url: string; text: string; bytes: number };
   const [pdfTracks, setPdfTracks] = useState<PdfTrack[]>([]);
+  const [playingPdfIdx, setPlayingPdfIdx] = useState<number | null>(null);
+  const pdfAudioRefs = useRef<(HTMLAudioElement | null)[]>([]);
+  const pdfTracksRef = useRef<PdfTrack[]>([]);
+  useEffect(() => { pdfTracksRef.current = pdfTracks; }, [pdfTracks]);
+
+  const playPdfTrackAt = useCallback((idx: number) => {
+    const tracks = pdfTracksRef.current;
+    if (idx < 0 || idx >= tracks.length) return;
+    pdfAudioRefs.current.forEach((a, i) => { if (a && i !== idx) { try { a.pause(); } catch { /* ignore */ } } });
+    const a = pdfAudioRefs.current[idx];
+    if (a) a.play().catch(() => { /* ignore */ });
+  }, []);
+
+  const bindMediaSessionToPdf = useCallback((idx: number) => {
+    if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+    const ms = navigator.mediaSession;
+    const t = pdfTracksRef.current[idx];
+    if (!t) return;
+    try {
+      ms.metadata = new MediaMetadata({
+        title: t.title,
+        artist: `Track ${idx + 1} of ${pdfTracksRef.current.length}`,
+        album: "Smart Audio Tutor — PDF",
+      });
+      ms.playbackState = "playing";
+      ms.setActionHandler("play", () => { const a = pdfAudioRefs.current[idx]; a?.play().catch(() => {}); });
+      ms.setActionHandler("pause", () => { const a = pdfAudioRefs.current[idx]; a?.pause(); });
+      ms.setActionHandler("nexttrack", () => {
+        const n = idx + 1 < pdfTracksRef.current.length ? idx + 1 : 0;
+        playPdfTrackAt(n);
+      });
+      ms.setActionHandler("previoustrack", () => {
+        const p = idx - 1 >= 0 ? idx - 1 : pdfTracksRef.current.length - 1;
+        playPdfTrackAt(p);
+      });
+      ms.setActionHandler("seekbackward", (d) => {
+        const a = pdfAudioRefs.current[idx];
+        if (a) a.currentTime = Math.max(0, a.currentTime - (d.seekOffset ?? 10));
+      });
+      ms.setActionHandler("seekforward", (d) => {
+        const a = pdfAudioRefs.current[idx];
+        if (a) a.currentTime = Math.min(a.duration || 0, a.currentTime + (d.seekOffset ?? 10));
+      });
+    } catch { /* ignore */ }
+  }, [playPdfTrackAt]);
 
   const stepsToSpeech = (steps: string[]): string => {
     // Join into natural spoken paragraphs, add pauses between steps
@@ -804,26 +849,42 @@ function Index() {
 
           {pdfTracks.length > 0 && (
             <div className="mt-4 space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   🎧 {pdfTracks.length} ready audio track(s)
                 </p>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-7 text-xs"
-                  onClick={() => {
-                    pdfTracks.forEach((t) => URL.revokeObjectURL(t.url));
-                    setPdfTracks([]);
-                  }}
-                >
-                  Clear
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => playPdfTrackAt(0)}
+                  >
+                    ▶ Play all
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      pdfTracks.forEach((t) => URL.revokeObjectURL(t.url));
+                      setPdfTracks([]);
+                      setPlayingPdfIdx(null);
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
               </div>
+              <p className="text-[10px] text-muted-foreground -mt-1">
+                Tap ▶ Play all, then lock your phone. Your Bluetooth ring's play/pause/next/prev buttons
+                will control these tracks from the lock screen. Each page auto-advances to the next.
+              </p>
               {pdfTracks.map((t, i) => (
-                <div key={t.id} className="rounded-md border bg-muted/20 p-3">
+                <div key={t.id} className={`rounded-md border p-3 ${playingPdfIdx === i ? "bg-primary/10 border-primary/40" : "bg-muted/20"}`}>
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <p className="text-sm font-medium truncate">{t.title}</p>
+                    <p className="text-sm font-medium truncate">
+                      {playingPdfIdx === i ? "▶ " : ""}{t.title}
+                    </p>
                     <a
                       href={t.url}
                       download={`pdf-page-${i + 1}.mp3`}
@@ -833,15 +894,31 @@ function Index() {
                     </a>
                   </div>
                   <audio
+                    ref={(el) => { pdfAudioRefs.current[i] = el; }}
                     controls
                     preload="metadata"
                     src={t.url}
                     className="w-full"
                     onPlay={(e) => {
-                      // Pause any other tracks so only one plays at a time
                       document.querySelectorAll("audio").forEach((a) => {
                         if (a !== e.currentTarget) a.pause();
                       });
+                      stopTts();
+                      setPlayingPdfIdx(i);
+                      bindMediaSessionToPdf(i);
+                    }}
+                    onPause={() => {
+                      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+                        try { navigator.mediaSession.playbackState = "paused"; } catch { /* ignore */ }
+                      }
+                    }}
+                    onEnded={() => {
+                      if (i + 1 < pdfTracksRef.current.length) {
+                        playPdfTrackAt(i + 1);
+                      } else {
+                        setPlayingPdfIdx(null);
+                        setStatus("All PDF tracks finished.");
+                      }
                     }}
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">

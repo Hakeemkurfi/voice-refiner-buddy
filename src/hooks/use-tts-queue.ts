@@ -267,13 +267,13 @@ export function useTtsQueue() {
     const bind = (action: MediaSessionAction, fn: () => void) => {
       try { ms.setActionHandler(action, fn); } catch { /* unsupported */ }
     };
-    bind("play", replay);
-    bind("pause", stop);
+    bind("play", pauseResume);
+    bind("pause", pauseResume);
     bind("nexttrack", next);
     bind("previoustrack", prev);
-    bind("seekbackward", replay);
+    bind("seekbackward", prev);
     bind("seekforward", next);
-  }, [items, currentItemIdx, stepIdx, speaking, next, prev, replay, stop]);
+  }, [items, currentItemIdx, stepIdx, speaking, next, prev, replay, stop, pauseResume]);
 
   return {
     items,
@@ -288,5 +288,6 @@ export function useTtsQueue() {
     prev,
     replay,
     stop,
+    pauseResume,
   };
 }

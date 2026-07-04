@@ -866,9 +866,11 @@ function Index() {
                 </Button>
               </div>
               {pdfTracks.map((t, i) => (
-                <div key={t.id} className="rounded-md border bg-muted/20 p-3">
+                <div key={t.id} className={`rounded-md border p-3 ${playingPdfIdx === i ? "bg-primary/10 border-primary/40" : "bg-muted/20"}`}>
                   <div className="flex items-center justify-between gap-2 mb-2">
-                    <p className="text-sm font-medium truncate">{t.title}</p>
+                    <p className="text-sm font-medium truncate">
+                      {playingPdfIdx === i ? "▶ " : ""}{t.title}
+                    </p>
                     <a
                       href={t.url}
                       download={`pdf-page-${i + 1}.mp3`}
@@ -878,15 +880,31 @@ function Index() {
                     </a>
                   </div>
                   <audio
+                    ref={(el) => { pdfAudioRefs.current[i] = el; }}
                     controls
                     preload="metadata"
                     src={t.url}
                     className="w-full"
                     onPlay={(e) => {
-                      // Pause any other tracks so only one plays at a time
                       document.querySelectorAll("audio").forEach((a) => {
                         if (a !== e.currentTarget) a.pause();
                       });
+                      stopTts();
+                      setPlayingPdfIdx(i);
+                      bindMediaSessionToPdf(i);
+                    }}
+                    onPause={() => {
+                      if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+                        try { navigator.mediaSession.playbackState = "paused"; } catch { /* ignore */ }
+                      }
+                    }}
+                    onEnded={() => {
+                      if (i + 1 < pdfTracksRef.current.length) {
+                        playPdfTrackAt(i + 1);
+                      } else {
+                        setPlayingPdfIdx(null);
+                        setStatus("All PDF tracks finished.");
+                      }
                     }}
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">

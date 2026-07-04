@@ -798,9 +798,61 @@ function Index() {
             />
           </label>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Tip: enable audio first, then start the PDF. Playback continues even if you lock the screen.
+            Each page becomes a ready-made MP3 you can play, pause, seek, and skip below.
+            Works with the standard media controls on your phone lock screen and Bluetooth ring.
           </p>
+
+          {pdfTracks.length > 0 && (
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  🎧 {pdfTracks.length} ready audio track(s)
+                </p>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    pdfTracks.forEach((t) => URL.revokeObjectURL(t.url));
+                    setPdfTracks([]);
+                  }}
+                >
+                  Clear
+                </Button>
+              </div>
+              {pdfTracks.map((t, i) => (
+                <div key={t.id} className="rounded-md border bg-muted/20 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="text-sm font-medium truncate">{t.title}</p>
+                    <a
+                      href={t.url}
+                      download={`pdf-page-${i + 1}.mp3`}
+                      className="text-[10px] text-primary underline shrink-0"
+                    >
+                      Download
+                    </a>
+                  </div>
+                  <audio
+                    controls
+                    preload="metadata"
+                    src={t.url}
+                    className="w-full"
+                    onPlay={(e) => {
+                      // Pause any other tracks so only one plays at a time
+                      document.querySelectorAll("audio").forEach((a) => {
+                        if (a !== e.currentTarget) a.pause();
+                      });
+                    }}
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">
+                    {(t.bytes / 1024).toFixed(0)} KB • {t.text.length} chars spoken
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
+
 
 
         {/* ── S10 Ring map (v3) ───────────────────────────────────────────── */}

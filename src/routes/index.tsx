@@ -455,6 +455,76 @@ function Index() {
     }
   };
 
+  // ── PDF → per-page JPEG → analyze pipeline ─────────────────────────────
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfProgress, setPdfProgress] = useState<{ done: number; total: number } | null>(null);
+
+  const renderPdfToJpegs = async (
+    file: File,
+    onPage?: (n: number, total: number) => void,
+  ): Promise<string[]> => {
+    // Dynamic import so pdfjs is only loaded in the browser
+    const pdfjs = await import("pdfjs-dist");
+    // Use a bundled worker URL (Vite handles ?url + worker file)
+    // @ts-ignore — vite-specific query
+    const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+    pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+
+    const buf = await file.arrayBuffer();
+    const doc = await pdfjs.getDocument({ data: buf }).promise;
+    const jpegs: string[] = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const viewport = page.getViewport({ scale: 2.0 }); // ~2x for OCR clarity
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.min(1800, Math.round(viewport.width));
+      canvas.height = Math.round(canvas.width * (viewport.height / viewport.width));
+      const scale = canvas.width / viewport.width;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("canvas 2d unsupported");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({
+        canvasContext: ctx,
+        viewport: page.getViewport({ scale: scale * 2.0 }),
+        canvas,
+      } as any).promise;
+      const jpeg = canvas.toDataURL("image/jpeg", 0.85).split(",")[1] ?? "";
+      jpegs.push(jpeg);
+      onPage?.(i, doc.numPages);
+    }
+    return jpegs;
+  };
+
+  const onPickPdf = async (file: File | null) => {
+    if (!file) return;
+    if (!audioUnlocked) {
+      setError("Tap 'Enable audio' at the top first, then upload the PDF.");
+      return;
+    }
+    setPdfBusy(true);
+    setError(null);
+    try {
+      setStatus(`Reading PDF "${file.name}"…`);
+      const pages = await renderPdfToJpegs(file, (n, total) => {
+        setPdfProgress({ done: n, total });
+        setStatus(`Rendering PDF page ${n} of ${total}…`);
+      });
+      setStatus(`PDF has ${pages.length} page(s). Analyzing and speaking now.`);
+      for (let i = 0; i < pages.length; i++) {
+        setPdfProgress({ done: i + 1, total: pages.length });
+        setStatus(`Solving PDF page ${i + 1} of ${pages.length}…`);
+        await handleCapture({ image_b64: pages[i] }, "flash");
+      }
+      setStatus("PDF finished. Use the ring or on-screen buttons to navigate.");
+    } catch (e) {
+      setError(`PDF failed: ${(e as Error).message}`);
+    } finally {
+      setPdfBusy(false);
+      setPdfProgress(null);
+    }
+  };
+
   const testCapture = async () => {
     const dummy =
       "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAr/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAAAAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AL+AB//Z";

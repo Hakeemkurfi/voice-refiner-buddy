@@ -698,6 +698,42 @@ function Index() {
           </p>
         </Card>
 
+        {/* ── PDF upload → per-page audio ──────────────────────────────── */}
+        <Card className="p-4">
+          <div className="flex items-start gap-3 mb-3">
+            <FileText className="h-5 w-5 text-primary mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <h2 className="font-semibold text-sm">📄 Upload a PDF of questions</h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Each page is rendered to an image, sent to the AI, and read aloud one by one.
+                Use the ring or the ▶ / ◀ buttons below to navigate between questions while walking.
+              </p>
+            </div>
+          </div>
+          <label className={`flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium ${pdfBusy || busy ? "opacity-50" : "cursor-pointer hover:bg-accent"}`}>
+            {pdfBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+            {pdfBusy
+              ? pdfProgress
+                ? `Working on page ${pdfProgress.done}/${pdfProgress.total}…`
+                : "Reading PDF…"
+              : "Choose PDF file"}
+            <input
+              type="file"
+              accept="application/pdf,.pdf"
+              className="hidden"
+              disabled={pdfBusy || busy}
+              onChange={(e) => {
+                onPickPdf(e.target.files?.[0] ?? null);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <p className="text-[10px] text-muted-foreground mt-2">
+            Tip: enable audio first, then start the PDF. Playback continues even if you lock the screen.
+          </p>
+        </Card>
+
+
         {/* ── S10 Ring map (v3) ───────────────────────────────────────────── */}
         <Card className="p-4">
           <h2 className="font-semibold text-sm mb-2">🔵 S10 Bluetooth Ring Remote (v3)</h2>

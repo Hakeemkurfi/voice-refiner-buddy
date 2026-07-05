@@ -464,12 +464,14 @@ function Index() {
     file: File,
     onPage?: (n: number, total: number) => void,
   ): Promise<string[]> => {
-    // Dynamic import so pdfjs is only loaded in the browser
-    const pdfjs = await import("pdfjs-dist");
-    // Use a bundled worker URL (Vite handles ?url + worker file)
-    // @ts-ignore — vite-specific query
-    const workerUrl = (await import("pdfjs-dist/build/pdf.worker.min.mjs?url")).default;
+    // Dynamic import so pdfjs is only loaded in the browser.
+    // Use the LEGACY build — the modern build uses Map.getOrInsertComputed
+    // which isn't in Safari/iOS yet and throws at runtime.
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    // @ts-ignore — vite-specific ?url query
+    const workerUrl = (await import("pdfjs-dist/legacy/build/pdf.worker.min.mjs?url")).default;
     pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+
 
     const buf = await file.arrayBuffer();
     const doc = await pdfjs.getDocument({ data: buf }).promise;

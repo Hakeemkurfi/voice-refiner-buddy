@@ -692,6 +692,8 @@ function Index() {
           </Card>
         )}
 
+        <StudyPack />
+
         <Card className="p-4">
           <div className="flex items-start gap-3">
             {online ? <Wifi className="h-5 w-5 text-primary mt-0.5" /> : <WifiOff className="h-5 w-5 text-destructive mt-0.5" />}

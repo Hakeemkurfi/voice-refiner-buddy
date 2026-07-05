@@ -7,6 +7,7 @@ import { useTtsQueue } from "@/hooks/use-tts-queue";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { StudyPack } from "@/components/study-pack";
 import {
   Camera,
   SkipBack,
@@ -690,6 +691,8 @@ function Index() {
             </div>
           </Card>
         )}
+
+        <StudyPack />
 
         <Card className="p-4">
           <div className="flex items-start gap-3">

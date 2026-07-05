@@ -301,6 +301,19 @@ export function StudyPack() {
         </label>
       </div>
 
+      {/* Bundled study packs — one-tap load */}
+      <div className="mb-3">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={loadBundledPhysics2}
+          className="gap-1 w-full sm:w-auto"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Load bundled: Physics 2 (each Q+A read twice, 34 min)
+        </Button>
+      </div>
+
       {/* Player */}
       {audioUrl ? (
         <>

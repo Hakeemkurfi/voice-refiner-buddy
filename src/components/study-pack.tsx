@@ -12,7 +12,9 @@ import {
   Download,
   Headphones,
   Upload,
+  Sparkles,
 } from "lucide-react";
+import physics2Mp3 from "../../public/study-packs/physics-2/physics-2-study.mp3.asset.json";
 
 type Chapter = { n: number; title: string; startSec: number; endSec: number };
 

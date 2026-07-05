@@ -1,47 +1,65 @@
-I found three concrete problems to fix:
 
-1. The ring is correctly detecting `prev`, but the ESP32 upload uses `HTTPClient` and returns `HTTP -1 connection refused`; I will replace command posting with the same raw HTTPS method already used by image upload, add WiFi checks, and print clearer network diagnostics.
-2. The current mouse-mode up/down actions call `volup` and `voldn`, but `ringAction()` does not handle those names, so up/down can silently do nothing; I will map down to camera ON/OFF toggle as you requested, up to stop/replay or stop audio, and keep left/right as previous/next.
-3. The photo in your upload is badly blurred/overexposed, so the AI cannot read the text reliably even if the model is good; I will adjust capture settings to prioritize document readability: stronger exposure control, less overexposure, better focus wait for OV5640, higher quality JPEG, and a better burst selection path.
+## Goal
 
-Implementation plan:
+Give the app a ready-to-play Study Pack section so you tap play once, lock your phone, and drive everything from the BLE ring buttons while walking. One long mp3, 49 chapters, next/prev = jump chapter, ±10s seek = review a step.
 
-- Firmware networking
-  - Replace `postCommand()` with a raw `WiFiClientSecure` HTTPS POST, matching `postJpeg()`.
-  - If WiFi is not connected, do not attempt POST; print `WiFi DOWN` instead of confusing HTTP -1.
-  - Keep printing the local dashboard IP every 15 seconds.
-  - Add serial/audit text showing `https://voice-refiner-buddy.lovable.app/api/public/event` and local `http://<ip>/`.
+## What you'll see in the app
 
-- Ring button mapping
-  - Middle short press: capture and send.
-  - Down button/swipe: camera ON/OFF toggle, no long press needed.
-  - Left: previous audio step.
-  - Right: next audio step.
-  - Up: stop/replay audio control.
-  - Remove the broken `volup`/`voldn` action names.
-  - Improve the S10 report handling so noisy reports like `00 BC 42 1F`, `02 BC 42 1F`, `07 BC 92 1F` trigger only one clean action instead of repeats.
+New card on `/` titled **"Study Pack"**, above the existing Live Capture / PDF sections:
 
-- Camera/readability fix
-  - Confirm the code treats PID `0x5640` as OV5640 and PID `0x3660` as OV3660; the firmware already does this, but I will make the serial output clearer.
-  - Reduce over-bright washed-out captures by lowering brightness/AE level and using stronger contrast for paper.
-  - Increase JPEG quality for OCR.
-  - For OV5640, use the updated autofocus command sequence from Espressif’s OV5640 AF work: release/start/wait before capture.
-  - Keep QXGA capture for text, but ensure preview does not leave stale low-resolution frames.
-  - Add a simple capture checklist in Serial/local dashboard: hold 20–30 cm, good light, fill page, tap autofocus/capture.
+- **Load Study Pack** — two file pickers:
+  - `physics-study-guide.mp3` (the 47-min file you'll upload)
+  - `physics-study-guide.md` (chapter list; optional — falls back to "Chapter N" labels)
+- Once loaded: single big `<audio controls>` with a **Download mp3** link.
+- **Chapter list** below the player: numbered rows ("1. Terminal speed timing — 00:00 → 01:17"), current chapter highlighted, tap a row to jump to that timestamp.
+- **⏮ Prev chapter · ⏯ Play/Pause · ⏭ Next chapter · ⏪ −10s · ⏩ +10s** buttons for on-screen control mirroring the ring.
+- Selection persists in `localStorage` (filename + last chapter + last position) so reopening the tab resumes where you stopped.
 
-- App-side audio response reliability
-  - Verify `/api/public/event` accepts `prev`, `next`, `replay`, and `stop` already; it does.
-  - Keep app processing of those events unchanged, because the app already calls `playPrev()`, `playNext()`, `replayTts()`, and `stopTts()`.
+## How the controller works (the important part)
 
-After this, your test should be:
+The player wires `navigator.mediaSession` to a real `<audio>` element playing real mp3 bytes. That is the only setup where phone lock-screen and Bluetooth remotes reliably work:
 
-```text
-1. Flash firmware.
-2. Open Serial Monitor.
-3. Wait for: [net] Dashboard: http://<ip>/
-4. Open that IP to check framing/focus.
-5. Press middle once: photo should upload.
-6. Press left/right: audio should go previous/next.
-7. Press up: stop/replay audio.
-8. Press down: camera toggles OFF/ON.
-```
+- `play` / `pause` handler → toggle audio (middle button on most rings).
+- `nexttrack` / `previoustrack` → jump to next/previous chapter timestamp (right / left on ring).
+- `seekforward` / `seekbackward` → ±10 s inside the current chapter (long-press or volume rockers on some rings).
+- `MediaMetadata` updates on every chapter change so the lock screen shows the current chapter title.
+
+Because it's a real HTMLAudioElement (not SpeechSynthesis), audio keeps playing when the screen locks on iOS and Android, and the OS forwards standard AVRCP / Media-Session events from the BLE ring to the tab — no ESP32 relay needed for playback control.
+
+Same handlers also bind to keyboard (Space, ←, →, J, L) so you can test on desktop.
+
+## Chapter parsing
+
+Parse the uploaded `physics-study-guide.md` with a small regex pass:
+
+- Section headers: `### Chapter N. Title`
+- Timestamp line: `- **Audio:** chapter N @ HH:MM:SS.mmm–HH:MM:SS.mmm`
+
+Produces `[{ n, title, startSec, endSec }]`. If no markdown is loaded, chapters fall back to evenly-numbered `Chapter 1..N` with no timestamps and next/prev degrade to ±30 s skip.
+
+## Files
+
+- **New** `src/components/study-pack.tsx` — the whole card (file pickers, audio element, chapter list, MediaSession wiring, keyboard handlers, localStorage resume).
+- **Edit** `src/routes/index.tsx` — mount `<StudyPack />` near the top of the page.
+- No backend changes. The mp3 stays local in the browser via `URL.createObjectURL`, so nothing is uploaded to the server and there's no cost.
+
+## Explicit non-goals for this step
+
+- Not re-generating the mp3 from PDFs (you already have it).
+- Not touching the existing Live Capture / PDF → TTS flow.
+- Not shipping the mp3 as a bundled asset (kept as user-loaded so you can swap versions without a redeploy).
+
+## Test-and-verify pass (before I call it done)
+
+Using Playwright against the running preview:
+
+1. Load the app, open Study Pack, load a small sample mp3 + the markdown.
+2. Assert chapter list renders with the correct count and timestamps parsed.
+3. Click **Play**, wait 2 s, confirm `audio.currentTime > 0` and `navigator.mediaSession.playbackState === "playing"`.
+4. Fire `nexttrack` → assert `currentTime` snapped to chapter 2's `startSec`.
+5. Fire `previoustrack` → back to chapter 1.
+6. Fire `seekbackward` → `currentTime` decreased by ~10 s.
+7. Reload the page → confirm last chapter + position restored from localStorage.
+8. Screenshot the card in playing state so you can see what it looks like on the phone.
+
+I'll only report done after all 8 checks pass.

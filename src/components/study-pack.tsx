@@ -12,7 +12,9 @@ import {
   Download,
   Headphones,
   Upload,
+  Sparkles,
 } from "lucide-react";
+import physics2Mp3 from "@/assets/physics-2-study.mp3.asset.json";
 
 type Chapter = { n: number; title: string; startSec: number; endSec: number };
 
@@ -105,6 +107,22 @@ export function StudyPack() {
     const text = await f.text();
     setChapters(parseChapters(text));
   }, []);
+
+  const loadBundledPhysics2 = useCallback(async () => {
+    try {
+      const mdRes = await fetch("/study-packs/physics-2/physics-2-study.md");
+      if (!mdRes.ok) throw new Error(`md ${mdRes.status}`);
+      const mdText = await mdRes.text();
+      setChapters(parseChapters(mdText));
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      // asset URL points to the CDN-hosted mp3; use it directly (no blob needed).
+      setAudioUrl(physics2Mp3.url);
+      setAudioName("physics-2-study.mp3");
+      persist({ audioName: "physics-2-study.mp3" });
+    } catch (e) {
+      console.error("Failed to load bundled Physics 2 pack", e);
+    }
+  }, [audioUrl, persist]);
 
   // Sync currentIdx from audio position
   const chaptersRef = useRef<Chapter[]>([]);
@@ -281,6 +299,19 @@ export function StudyPack() {
             onChange={(e) => onMdFile(e.target.files?.[0] ?? null)}
           />
         </label>
+      </div>
+
+      {/* Bundled study packs — one-tap load */}
+      <div className="mb-3">
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={loadBundledPhysics2}
+          className="gap-1 w-full sm:w-auto"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          Load bundled: Physics 2 (each Q+A read twice, 34 min)
+        </Button>
       </div>
 
       {/* Player */}

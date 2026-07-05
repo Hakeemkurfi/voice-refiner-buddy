@@ -108,6 +108,22 @@ export function StudyPack() {
     setChapters(parseChapters(text));
   }, []);
 
+  const loadBundledPhysics2 = useCallback(async () => {
+    try {
+      const mdRes = await fetch("/study-packs/physics-2/physics-2-study.md");
+      if (!mdRes.ok) throw new Error(`md ${mdRes.status}`);
+      const mdText = await mdRes.text();
+      setChapters(parseChapters(mdText));
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      // asset URL points to the CDN-hosted mp3; use it directly (no blob needed).
+      setAudioUrl(physics2Mp3.url);
+      setAudioName("physics-2-study.mp3");
+      persist({ audioName: "physics-2-study.mp3" });
+    } catch (e) {
+      console.error("Failed to load bundled Physics 2 pack", e);
+    }
+  }, [audioUrl, persist]);
+
   // Sync currentIdx from audio position
   const chaptersRef = useRef<Chapter[]>([]);
   useEffect(() => { chaptersRef.current = chapters; }, [chapters]);

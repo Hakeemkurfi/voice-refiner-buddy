@@ -5,7 +5,7 @@ const Input = z.object({
   image_b64: z.string().min(0).optional(),
   burst_id: z.string().uuid().optional(),
   contextText: z.string().max(12000).optional(),
-  model: z.enum(["flash", "pro", "auto"]).optional(),
+  model: z.enum(["flash", "pro", "auto", "deepseek"]).optional(),
 });
 
 type Parsed = {

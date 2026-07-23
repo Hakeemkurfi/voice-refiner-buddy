@@ -479,7 +479,7 @@ export const analyzeImage = createServerFn({ method: "POST" })
     // DeepSeek is text-only and cannot read images. So we first use Gemini for
     // OCR only (fast + cheap), then DeepSeek solves & produces the dictation.
     // This uses your paid DeepSeek balance instead of Lovable AI credits.
-    if (deepseekKey && geminiKey && (mode === "deepseek" || mode === "auto")) {
+    if (deepseekKey && geminiKey && mode === "deepseek") {
       try {
         let ocr = await callGeminiOCR("flash", flashPayload, geminiKey);
         if (isWeakOCR(ocr)) {

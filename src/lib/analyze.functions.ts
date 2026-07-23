@@ -475,6 +475,40 @@ export const analyzeImage = createServerFn({ method: "POST" })
     const flashPayload = { images_b64: images_b64.slice(0, 1), contextText: data.contextText };
     const proPayload = { images_b64: images_b64.slice(0, 3), contextText: data.contextText };
 
+    // ── DEEPSEEK BRANCH ───────────────────────────────────────────────────────
+    // DeepSeek is text-only and cannot read images. So we first use Gemini for
+    // OCR only (fast + cheap), then DeepSeek solves & produces the dictation.
+    // This uses your paid DeepSeek balance instead of Lovable AI credits.
+    if (deepseekKey && geminiKey && (mode === "deepseek" || mode === "auto")) {
+      try {
+        let ocr = await callGeminiOCR("flash", flashPayload, geminiKey);
+        if (isWeakOCR(ocr)) {
+          const ocrPro = await callGeminiOCR("pro", proPayload, geminiKey);
+          if ((ocrPro.extractedText ?? "").trim().length > (ocr.extractedText ?? "").trim().length) {
+            ocr = ocrPro;
+          }
+        }
+        const solved = await solveWithDeepSeek(
+          ocr.extractedText ?? "",
+          data.contextText,
+          deepseekKey,
+        );
+        return finalize(
+          {
+            ...solved,
+            extractedText: ocr.extractedText ?? solved.extractedText ?? "",
+            confidence: typeof solved.confidence === "number" ? solved.confidence : ocr.confidence,
+          },
+          "deepseek-chat",
+          false,
+          flashPayload.images_b64.length,
+        );
+      } catch (e) {
+        // If DeepSeek branch fails, fall through to the normal Gemini flow.
+        console.warn("DeepSeek branch failed:", (e as Error).message);
+      }
+    }
+
     if (mode === "flash") {
       const { parsed, provider } = await callWithFallback("flash", flashPayload, geminiKey, lovableKey);
       return finalize(parsed, provider, false, flashPayload.images_b64.length);

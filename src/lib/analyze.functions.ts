@@ -423,8 +423,9 @@ export const analyzeImage = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const geminiKey = process.env.GEMINI_API_KEY;
     const lovableKey = process.env.LOVABLE_API_KEY;
+    const deepseekKey = process.env.DEEPSEEK_API_KEY;
 
-    if (!geminiKey && !lovableKey) {
+    if (!geminiKey && !lovableKey && !deepseekKey) {
       throw new Error(
         "No API key set. Add GEMINI_API_KEY in project secrets (or enable Lovable AI).",
       );

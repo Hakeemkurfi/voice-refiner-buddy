@@ -5,7 +5,7 @@ const Input = z.object({
   image_b64: z.string().min(0).optional(),
   burst_id: z.string().uuid().optional(),
   contextText: z.string().max(12000).optional(),
-  model: z.enum(["flash", "pro", "auto"]).optional(),
+  model: z.enum(["flash", "pro", "auto", "deepseek"]).optional(),
 });
 
 type Parsed = {
@@ -58,11 +58,61 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 
 confidence = 0.0 to 1.0 — how sure you are of the reading AND the answer.`;
 
+// ─── OCR-only prompt used when DeepSeek is the solver layer ───────────────────
+const OCR_PROMPT = `You are an elite OCR engine. Extract every word, number, symbol, and equation from the image exactly as it appears. Preserve line breaks and structure. The page contains physics problems: rigid body rotation about a fixed axis, vibrations and waves, or wave optics.
+
+Return ONLY JSON:
+{"title":"short title (max 8 words)","summary":"one spoken sentence naming the topic","extractedText":"verbatim text with line breaks; math in LaTeX $...$","confidence":0.0_to_1.0}
+
+Do NOT solve the problems. Do NOT explain. Only extract text faithfully.`;
+
+// ─── DeepSeek solver prompt (text-only after Gemini OCR) ───────────────────────
+const DEEPSEEK_SOLVER_PROMPT = `You are a calm, patient physics/math tutor dictating to a student who is WALKING with earbuds and cannot see the page. You are given the exact text of a physics page. The page contains problems from: rigid body rotation about a fixed axis, vibrations and waves, or wave optics.
+
+HARD RULE: If the text contains ANY question, exercise, problem, multiple-choice item, "find/show/calculate/prove/derive/determine", numbered items, or a question mark — you MUST produce a full worked solution with a final numeric or symbolic answer for EVERY one. Returning only a restatement, only the extracted text, or steps that end without an answer is FORBIDDEN. If a value is missing, assume a reasonable standard value (state the assumption) and still deliver a numeric answer. Never say "cannot solve", "insufficient information", or "would need more data".
+
+Return ONLY JSON:
+{"title":"short title (max 8 words)","summary":"one short spoken sentence naming the topic","steps":["sentence 1","sentence 2"],"extractedText":"echo the input text verbatim","confidence":0.0_to_1.0}
+
+DICTATION RULES for the "steps" array — these are spoken aloud in order and MUST be memorizable while walking:
+
+1. If the page has MULTIPLE questions, handle EVERY question, one after another, in the same "steps" array. Between two questions insert one short step: "Next question, number two." (or three, four, …).
+
+2. For EACH question follow this exact spoken structure:
+   a. "Question <N>. In short, <one-sentence plain-English restatement of what is asked>." Keep the restatement under 18 words.
+   b. If MULTIPLE CHOICE (options A/B/C/D/E visible):
+        - Step 2: "The answer is <letter>."
+        - Then 2 to 4 SHORT proof steps: name the formula, plug in numbers, get the value, match the option.
+        - Final step for that question: "So option <letter> is correct."
+   c. If COMPUTATIONAL / show-that / derive (no options):
+        - Step 2: "Formula: <state the formula in words>."
+        - Step 3: "Values: <list each symbol equals number with unit>."
+        - Then 4 to 10 small dictation steps: substitute, simplify, compute, keep units.
+        - Second-last step: "Therefore, <quantity> equals <number> <unit>."
+        - Last step: "Check: <one-line sanity check on units or magnitude."
+
+3. Speech style — natural, calm, formal, unhurried, tutor-like. Never rushed, never robotic.
+   - Each step ONE sentence, 6 to 22 words.
+   - Speak ALL math/physics symbols in full English words:
+     "x^2"→"x squared"; "a/b"→"a over b"; "√x"→"the square root of x";
+     "ω"→"omega"; "α"→"alpha"; "θ"→"theta"; "π"→"pi"; "λ"→"lambda"; "Δ"→"delta"; "Σ"→"sigma";
+     "I"→"moment of inertia I"; "τ"→"torque tau"; "rad/s"→"radians per second";
+     "rad/s^2"→"radians per second squared"; "N·m"→"newton meters"; "kg·m^2"→"kilogram meter squared";
+     "Hz"→"hertz"; "nm"→"nanometers"; "μm"→"micrometers".
+   - Always say "equals", "plus", "minus", "times", "divided by".
+   - Start steps with: "First,", "Next,", "Now,", "Then,", "Substituting,", "Therefore,", "Finally,", "Check,".
+   - No markdown, no LaTeX, no raw symbols anywhere inside steps (LaTeX only in extractedText).
+
+4. Keep memorization in mind: prefer short, punchy sentences the student can repeat once and remember. Do NOT pad, do NOT re-read the question, do NOT explain theory that was not asked.
+
+confidence = 0.0 to 1.0 — how sure you are of the final answer.`;
+
 // ─── Direct Google Gemini REST API ────────────────────────────────────────────
 async function callGemini(
   modelId: string,
   data: { images_b64: string[]; contextText?: string },
   apiKey: string,
+  prompt: string = SYSTEM_PROMPT,
 ): Promise<Parsed> {
   const imageParts = data.images_b64.map((b64) => ({
     inlineData: { mimeType: "image/jpeg", data: b64 },
@@ -90,7 +140,7 @@ async function callGemini(
   const modelCandidates = geminiModelMap[modelId === "pro" ? "pro" : "flash"];
 
   const body = {
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    systemInstruction: { parts: [{ text: prompt }] },
     contents: [
       {
         role: "user",
@@ -266,6 +316,82 @@ function isWeakResult(p: Parsed): boolean {
   return false;
 }
 
+function isWeakOCR(p: Parsed): boolean {
+  const text = (p.extractedText ?? "").trim();
+  const conf = typeof p.confidence === "number" ? p.confidence : 1;
+  if (text.length < 6) return true;
+  if (conf < 0.55) return true;
+  return false;
+}
+
+async function callGeminiOCR(
+  modelId: "flash" | "pro",
+  data: { images_b64: string[]; contextText?: string },
+  apiKey: string,
+): Promise<Parsed> {
+  return callGemini(modelId, data, apiKey, OCR_PROMPT);
+}
+
+// ─── DeepSeek solver (text-only) ─────────────────────────────────────────────
+async function solveWithDeepSeek(
+  extractedText: string,
+  contextText: string | undefined,
+  apiKey: string,
+): Promise<Parsed> {
+  const userContent =
+    `Extracted page text:\n---\n${extractedText.trim()}\n---` +
+    (contextText?.trim() ? `\n\nClass material to follow:\n${contextText.trim()}` : "");
+
+  const body = {
+    model: "deepseek-chat",
+    messages: [
+      { role: "system", content: DEEPSEEK_SOLVER_PROMPT },
+      { role: "user", content: userContent },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.1,
+    max_tokens: 4096,
+  };
+
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(30000),
+    body: JSON.stringify(body),
+  }).catch((error) => {
+    throw new Error(`DeepSeek request failed: ${(error as Error).message}`);
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    if (res.status === 401) {
+      throw new Error("Invalid DEEPSEEK_API_KEY. Update it in project secrets.");
+    }
+    if (res.status === 402) {
+      throw new Error("DeepSeek account out of credits. Top up at platform.deepseek.com.");
+    }
+    if (res.status === 429) {
+      throw new Error("DeepSeek rate limit hit. Please retry in a few seconds.");
+    }
+    throw new Error(`DeepSeek API error ${res.status}: ${txt.slice(0, 300)}`);
+  }
+
+  const json = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const content = json.choices?.[0]?.message?.content ?? "{}";
+  return safeParseJsonObject(content) ?? {
+    title: "DeepSeek result",
+    summary: "",
+    steps: [content.slice(0, 500)],
+    extractedText,
+    confidence: 0.5,
+  };
+}
+
 // Try Gemini first; on full chain failure, fall back to OpenAI via gateway.
 async function callWithFallback(
   modelId: "flash" | "pro",
@@ -297,8 +423,9 @@ export const analyzeImage = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const geminiKey = process.env.GEMINI_API_KEY;
     const lovableKey = process.env.LOVABLE_API_KEY;
+    const deepseekKey = process.env.DEEPSEEK_API_KEY;
 
-    if (!geminiKey && !lovableKey) {
+    if (!geminiKey && !lovableKey && !deepseekKey) {
       throw new Error(
         "No API key set. Add GEMINI_API_KEY in project secrets (or enable Lovable AI).",
       );
@@ -347,6 +474,40 @@ export const analyzeImage = createServerFn({ method: "POST" })
     // Multi-frame is reserved for Pro escalation when Flash result is weak.
     const flashPayload = { images_b64: images_b64.slice(0, 1), contextText: data.contextText };
     const proPayload = { images_b64: images_b64.slice(0, 3), contextText: data.contextText };
+
+    // ── DEEPSEEK BRANCH ───────────────────────────────────────────────────────
+    // DeepSeek is text-only and cannot read images. So we first use Gemini for
+    // OCR only (fast + cheap), then DeepSeek solves & produces the dictation.
+    // This uses your paid DeepSeek balance instead of Lovable AI credits.
+    if (deepseekKey && geminiKey && mode === "deepseek") {
+      try {
+        let ocr = await callGeminiOCR("flash", flashPayload, geminiKey);
+        if (isWeakOCR(ocr)) {
+          const ocrPro = await callGeminiOCR("pro", proPayload, geminiKey);
+          if ((ocrPro.extractedText ?? "").trim().length > (ocr.extractedText ?? "").trim().length) {
+            ocr = ocrPro;
+          }
+        }
+        const solved = await solveWithDeepSeek(
+          ocr.extractedText ?? "",
+          data.contextText,
+          deepseekKey,
+        );
+        return finalize(
+          {
+            ...solved,
+            extractedText: ocr.extractedText ?? solved.extractedText ?? "",
+            confidence: typeof solved.confidence === "number" ? solved.confidence : ocr.confidence,
+          },
+          "deepseek-chat",
+          false,
+          flashPayload.images_b64.length,
+        );
+      } catch (e) {
+        // If DeepSeek branch fails, fall through to the normal Gemini flow.
+        console.warn("DeepSeek branch failed:", (e as Error).message);
+      }
+    }
 
     if (mode === "flash") {
       const { parsed, provider } = await callWithFallback("flash", flashPayload, geminiKey, lovableKey);

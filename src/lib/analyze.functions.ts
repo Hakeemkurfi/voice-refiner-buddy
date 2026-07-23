@@ -112,6 +112,7 @@ async function callGemini(
   modelId: string,
   data: { images_b64: string[]; contextText?: string },
   apiKey: string,
+  prompt: string = SYSTEM_PROMPT,
 ): Promise<Parsed> {
   const imageParts = data.images_b64.map((b64) => ({
     inlineData: { mimeType: "image/jpeg", data: b64 },

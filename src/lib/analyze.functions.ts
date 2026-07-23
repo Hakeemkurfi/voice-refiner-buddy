@@ -316,6 +316,82 @@ function isWeakResult(p: Parsed): boolean {
   return false;
 }
 
+function isWeakOCR(p: Parsed): boolean {
+  const text = (p.extractedText ?? "").trim();
+  const conf = typeof p.confidence === "number" ? p.confidence : 1;
+  if (text.length < 6) return true;
+  if (conf < 0.55) return true;
+  return false;
+}
+
+async function callGeminiOCR(
+  modelId: "flash" | "pro",
+  data: { images_b64: string[]; contextText?: string },
+  apiKey: string,
+): Promise<Parsed> {
+  return callGemini(modelId, data, apiKey, OCR_PROMPT);
+}
+
+// ─── DeepSeek solver (text-only) ─────────────────────────────────────────────
+async function solveWithDeepSeek(
+  extractedText: string,
+  contextText: string | undefined,
+  apiKey: string,
+): Promise<Parsed> {
+  const userContent =
+    `Extracted page text:\n---\n${extractedText.trim()}\n---` +
+    (contextText?.trim() ? `\n\nClass material to follow:\n${contextText.trim()}` : "");
+
+  const body = {
+    model: "deepseek-chat",
+    messages: [
+      { role: "system", content: DEEPSEEK_SOLVER_PROMPT },
+      { role: "user", content: userContent },
+    ],
+    response_format: { type: "json_object" },
+    temperature: 0.1,
+    max_tokens: 4096,
+  };
+
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(30000),
+    body: JSON.stringify(body),
+  }).catch((error) => {
+    throw new Error(`DeepSeek request failed: ${(error as Error).message}`);
+  });
+
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    if (res.status === 401) {
+      throw new Error("Invalid DEEPSEEK_API_KEY. Update it in project secrets.");
+    }
+    if (res.status === 402) {
+      throw new Error("DeepSeek account out of credits. Top up at platform.deepseek.com.");
+    }
+    if (res.status === 429) {
+      throw new Error("DeepSeek rate limit hit. Please retry in a few seconds.");
+    }
+    throw new Error(`DeepSeek API error ${res.status}: ${txt.slice(0, 300)}`);
+  }
+
+  const json = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  const content = json.choices?.[0]?.message?.content ?? "{}";
+  return safeParseJsonObject(content) ?? {
+    title: "DeepSeek result",
+    summary: "",
+    steps: [content.slice(0, 500)],
+    extractedText,
+    confidence: 0.5,
+  };
+}
+
 // Try Gemini first; on full chain failure, fall back to OpenAI via gateway.
 async function callWithFallback(
   modelId: "flash" | "pro",

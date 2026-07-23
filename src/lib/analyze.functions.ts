@@ -140,7 +140,7 @@ async function callGemini(
   const modelCandidates = geminiModelMap[modelId === "pro" ? "pro" : "flash"];
 
   const body = {
-    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    systemInstruction: { parts: [{ text: prompt }] },
     contents: [
       {
         role: "user",

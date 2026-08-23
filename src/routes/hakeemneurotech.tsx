@@ -881,9 +881,18 @@ function Footer() {
       className="mt-10 border-t pt-6 text-center text-xs leading-relaxed opacity-70"
       style={{ borderColor: "var(--neuro-line)" }}
     >
+      <a
+        href="/firmware/axon_neuro_bulb.ino"
+        download
+        className="mx-auto mb-6 block w-full max-w-xs rounded-xl px-4 py-2.5 text-center text-sm font-medium transition-transform active:scale-[0.98]"
+        style={{ background: "var(--emo-soft)", border: "1px solid var(--emo)", color: "var(--neuro-fg)" }}
+      >
+        Download ESP32 firmware (.ino)
+      </a>
       <p className="font-medium tracking-[0.12em] uppercase" style={{ color: "var(--emo)" }}>
         Axon Dynamics
       </p>
+
       <p className="mt-1">Developed by Hakeem Kurfi · Katsina, Nigeria</p>
       <p className="mt-1 opacity-70">
         Harbin Engineering University — Department of Science and Intelligent Systems · Class of AI ·

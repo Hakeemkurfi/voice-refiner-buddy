@@ -644,14 +644,16 @@ function EegPanel({
   emotion,
   intensity,
   remote,
+  decoding,
 }: {
   emotion: Emotion;
   intensity: number;
   remote: number[] | null;
+  decoding: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const stateRef = useRef({ emotion, intensity, remote });
-  stateRef.current = { emotion, intensity, remote };
+  const stateRef = useRef({ emotion, intensity, remote, decoding });
+  stateRef.current = { emotion, intensity, remote, decoding };
 
   useEffect(() => {
     const canvas = ref.current;
@@ -662,10 +664,22 @@ function EegPanel({
     const CH = 4;
     const N = 240;
     const buffers: number[][] = Array.from({ length: CH }, () => new Array(N).fill(0));
+    // Per-channel slow-drifting oscillator parameters → the trace never repeats.
+    const drift = Array.from({ length: CH }, (_, c) => ({
+      f1: 0.8 + c * 0.31,
+      f2: 1.9 + c * 0.47,
+      f3: 3.3 + c * 0.19,
+      p1: Math.random() * 6.28,
+      p2: Math.random() * 6.28,
+      p3: Math.random() * 6.28,
+      burst: 0,
+      nextBurst: 40 + Math.random() * 200,
+    }));
     let raf = 0;
     let w = 0;
     let h = 0;
     let t = 0;
+    let frame = 0;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
     const resize = () => {
@@ -684,19 +698,46 @@ function EegPanel({
     const grid = () => getComputedStyle(canvas).getPropertyValue("--neuro-grid").trim() || "#2226";
 
     const draw = () => {
-      const { emotion: em, intensity: inten, remote: rem } = stateRef.current;
-      t += 0.06 + em.freq * 0.03;
+      const { emotion: em, intensity: inten, remote: rem, decoding: on } = stateRef.current;
+      frame++;
+      const gain = on ? 1 : 0.12;
+      t += 0.05 + em.freq * 0.03 * gain;
 
       for (let c = 0; c < CH; c++) {
-        const k = 1 + c * 0.55;
-        // If the ESP32 streamed real samples, ride on them; else synthesise.
+        const d = drift[c];
+        // Slowly wander the oscillator frequencies and phases (non-stationary EEG).
+        d.f1 += (Math.random() - 0.5) * 0.006;
+        d.f2 += (Math.random() - 0.5) * 0.01;
+        d.f3 += (Math.random() - 0.5) * 0.014;
+        d.f1 = Math.min(1.6, Math.max(0.5, d.f1));
+        d.f2 = Math.min(3.2, Math.max(1.1, d.f2));
+        d.f3 = Math.min(5.5, Math.max(2.0, d.f3));
+        d.p1 += 0.004;
+        d.p2 -= 0.007;
+        d.p3 += 0.011;
+
+        // Occasional spindles / spikes, more frequent at high arousal.
+        if (on && --d.nextBurst <= 0) {
+          d.burst = 12 + Math.random() * 26;
+          d.nextBurst = 60 + Math.random() * (320 - inten * 220);
+        }
+        let burstAmp = 0;
+        if (d.burst > 0) {
+          d.burst--;
+          burstAmp = Math.sin(d.burst * 0.7) * (0.35 + inten * 0.7) * em.amp;
+        }
+
+        const envelope = 0.65 + 0.35 * Math.sin(t * 0.19 + c * 1.7);
         const devSample =
           rem && rem.length ? rem[(Math.floor(t * 6) + c * 13) % rem.length] * 0.6 : 0;
         const v =
-          devSample +
-          Math.sin(t * em.freq * k) * em.amp * (0.5 + inten) +
-          Math.sin(t * em.freq * k * 2.7 + c) * em.amp * 0.32 +
-          (Math.random() - 0.5) * em.noise * 2;
+          (devSample +
+            Math.sin(t * em.freq * d.f1 + d.p1) * em.amp * (0.45 + inten) * envelope +
+            Math.sin(t * em.freq * d.f2 + d.p2) * em.amp * 0.34 +
+            Math.sin(t * em.freq * d.f3 + d.p3) * em.amp * 0.18 * (0.4 + inten) +
+            burstAmp +
+            (Math.random() - 0.5) * em.noise * 2) *
+          gain;
         buffers[c].push(v);
         buffers[c].shift();
       }
@@ -706,7 +747,8 @@ function EegPanel({
 
       ctx.strokeStyle = grid();
       ctx.lineWidth = 1;
-      for (let x = 0; x <= w; x += 48) {
+      const off = (frame * 0.6) % 48;
+      for (let x = -off; x <= w; x += 48) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, h);
@@ -720,6 +762,7 @@ function EegPanel({
       }
 
       const col = accent();
+      ctx.shadowColor = col;
       for (let c = 0; c < CH; c++) {
         const mid = rowH * c + rowH / 2;
         ctx.beginPath();
@@ -730,10 +773,12 @@ function EegPanel({
           else ctx.lineTo(x, y);
         }
         ctx.strokeStyle = col;
+        ctx.shadowBlur = 8;
         ctx.globalAlpha = 0.95 - c * 0.16;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
+      ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
       raf = requestAnimationFrame(draw);
     };
@@ -747,7 +792,13 @@ function EegPanel({
   return (
     <Panel
       title="EEG waveform stream"
-      hint={remote ? "ESP32 telemetry · 256 Hz" : "synthesised montage · 256 Hz"}
+      hint={
+        !decoding
+          ? "decoder paused"
+          : remote
+            ? "ESP32 telemetry · 256 Hz"
+            : "synthesised montage · 256 Hz"
+      }
     >
       <div className="rounded-xl p-2" style={{ background: "oklch(0 0 0 / 22%)" }}>
         <canvas ref={ref} className="block h-56 w-full" />
@@ -761,6 +812,7 @@ function EegPanel({
     </Panel>
   );
 }
+
 
 function BandPanel({ emotion, intensity }: { emotion: Emotion; intensity: number }) {
   const rows = useMemo(

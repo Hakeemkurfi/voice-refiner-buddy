@@ -32,7 +32,7 @@ export const Route = createFileRoute("/hakeemneurotech")({
 /* Emotion model                                                       */
 /* ------------------------------------------------------------------ */
 
-type EmotionId = "rest" | "happy" | "laugh" | "excitement" | "stressed" | "anger";
+type EmotionId = "neutral" | "rest" | "happy" | "laugh" | "excitement" | "stressed" | "anger";
 
 type Emotion = {
   id: EmotionId;

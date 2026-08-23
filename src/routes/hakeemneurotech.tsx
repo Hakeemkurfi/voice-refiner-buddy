@@ -511,7 +511,7 @@ function CorticalMap({
   }, []);
 
   return (
-    <Panel title="Cortical activity map" hint="live · 8-channel montage" className="h-full">
+    <Panel title="Cortical activity map" hint="live ·-channel montage" className="h-full">
       <div className="relative overflow-hidden rounded-xl" style={{ background: "oklch(0 0 0 / 22%)" }}>
         <canvas ref={ref} className="block h-[19rem] w-full md:h-[24rem]" />
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">

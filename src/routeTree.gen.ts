@@ -9,12 +9,19 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as HakeemneurotechRouteImport } from './routes/hakeemneurotech'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
 import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
+import { Route as ApiPublicNeuroRouteImport } from './routes/api/public/neuro'
 import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
 import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/burst.finalize'
 
+const HakeemneurotechRoute = HakeemneurotechRouteImport.update({
+  id: '/hakeemneurotech',
+  path: '/hakeemneurotech',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -30,6 +37,11 @@ const ApiPublicTriggerRoute = ApiPublicTriggerRouteImport.update({
   path: '/api/public/trigger',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicNeuroRoute = ApiPublicNeuroRouteImport.update({
+  id: '/api/public/neuro',
+  path: '/api/public/neuro',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicEventRoute = ApiPublicEventRouteImport.update({
   id: '/api/public/event',
   path: '/api/public/event',
@@ -43,14 +55,18 @@ const ApiPublicBurstFinalizeRoute = ApiPublicBurstFinalizeRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/hakeemneurotech': typeof HakeemneurotechRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/hakeemneurotech': typeof HakeemneurotechRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -58,7 +74,9 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/hakeemneurotech': typeof HakeemneurotechRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -67,21 +85,27 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/hakeemneurotech'
     | '/api/public/event'
+    | '/api/public/neuro'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/hakeemneurotech'
     | '/api/public/event'
+    | '/api/public/neuro'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
   id:
     | '__root__'
     | '/'
+    | '/hakeemneurotech'
     | '/api/public/event'
+    | '/api/public/neuro'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
@@ -89,7 +113,9 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  HakeemneurotechRoute: typeof HakeemneurotechRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
+  ApiPublicNeuroRoute: typeof ApiPublicNeuroRoute
   ApiPublicTriggerRoute: typeof ApiPublicTriggerRoute
   ApiPublicTtsRoute: typeof ApiPublicTtsRoute
   ApiPublicBurstFinalizeRoute: typeof ApiPublicBurstFinalizeRoute
@@ -97,6 +123,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/hakeemneurotech': {
+      id: '/hakeemneurotech'
+      path: '/hakeemneurotech'
+      fullPath: '/hakeemneurotech'
+      preLoaderRoute: typeof HakeemneurotechRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -118,6 +151,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicTriggerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/neuro': {
+      id: '/api/public/neuro'
+      path: '/api/public/neuro'
+      fullPath: '/api/public/neuro'
+      preLoaderRoute: typeof ApiPublicNeuroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/event': {
       id: '/api/public/event'
       path: '/api/public/event'
@@ -137,7 +177,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  HakeemneurotechRoute: HakeemneurotechRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
+  ApiPublicNeuroRoute: ApiPublicNeuroRoute,
   ApiPublicTriggerRoute: ApiPublicTriggerRoute,
   ApiPublicTtsRoute: ApiPublicTtsRoute,
   ApiPublicBurstFinalizeRoute: ApiPublicBurstFinalizeRoute,

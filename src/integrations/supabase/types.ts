@@ -106,6 +106,36 @@ export type Database = {
         }
         Relationships: []
       }
+      neuro_state: {
+        Row: {
+          bulb: boolean
+          device_id: string | null
+          eeg: Json
+          emotion: string
+          id: string
+          intensity: number
+          updated_at: string
+        }
+        Insert: {
+          bulb?: boolean
+          device_id?: string | null
+          eeg?: Json
+          emotion?: string
+          id: string
+          intensity?: number
+          updated_at?: string
+        }
+        Update: {
+          bulb?: boolean
+          device_id?: string | null
+          eeg?: Json
+          emotion?: string
+          id?: string
+          intensity?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

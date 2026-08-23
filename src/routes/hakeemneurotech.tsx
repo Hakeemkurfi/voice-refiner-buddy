@@ -158,9 +158,12 @@ function NeuroConsole() {
     [],
   );
 
+  const localEditAt = useRef(0);
   const applyState = useCallback(
     (s: { emotion?: string; bulb?: boolean; intensity?: number; eeg?: number[] } | null) => {
       if (!s) return;
+      // Don't let a stale poll response undo an action the user just made.
+      if (Date.now() - localEditAt.current < 2500) return;
       if (s.emotion) setEmotionId(s.emotion as EmotionId);
       if (typeof s.bulb === "boolean") setBulb(s.bulb);
       if (typeof s.intensity === "number") setIntensity(s.intensity);
@@ -197,6 +200,7 @@ function NeuroConsole() {
 
   const setEmotion = useCallback(
     (id: EmotionId, src: string) => {
+      localEditAt.current = Date.now();
       setEmotionId(id);
       setLastEvent(`${byId(id).label.toLowerCase()} detected`);
       pushLog(`EEG classifier → ${byId(id).label.toUpperCase()}  [${src}]`);
@@ -216,6 +220,7 @@ function NeuroConsole() {
 
   const toggleBulb = useCallback(
     (src: string) => {
+      localEditAt.current = Date.now();
       setBulb((b) => {
         const nb = !b;
         pushLog(`Motor-imagery intent → RELAY GPIO26 ${nb ? "HIGH (bulb ON)" : "LOW (bulb OFF)"}  [${src}]`);
@@ -269,30 +274,30 @@ function NeuroConsole() {
         <Header linked={linked} />
 
         <section className="mt-8 grid gap-5 lg:grid-cols-12">
-          <div className="lg:col-span-7">
+          <div className="min-w-0 lg:col-span-7">
             <CorticalMap emotion={emotion} intensity={intensity} bulb={bulb} />
           </div>
-          <div className="grid gap-5 lg:col-span-5">
+          <div className="grid min-w-0 gap-5 lg:col-span-5">
             <EmotionPanel emotion={emotion} intensity={intensity} lastEvent={lastEvent} />
             <BulbPanel bulb={bulb} onToggle={() => toggleBulb("console")} />
           </div>
         </section>
 
         <section className="mt-5 grid gap-5 lg:grid-cols-12">
-          <div className="lg:col-span-8">
+          <div className="min-w-0 lg:col-span-8">
             <EegPanel emotion={emotion} intensity={intensity} remote={remoteEeg} />
           </div>
-          <div className="grid gap-5 lg:col-span-4">
+          <div className="grid min-w-0 gap-5 lg:col-span-4">
             <BandPanel emotion={emotion} intensity={intensity} />
             <LogPanel log={log} />
           </div>
         </section>
 
         <section className="mt-5 grid gap-5 lg:grid-cols-12">
-          <div className="lg:col-span-7">
+          <div className="min-w-0 lg:col-span-7">
             <EmotionSelector active={emotionId} onSelect={(id) => setEmotion(id, "console")} />
           </div>
-          <div className="lg:col-span-5">
+          <div className="min-w-0 lg:col-span-5">
             <RingMapPanel />
           </div>
         </section>

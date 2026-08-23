@@ -85,7 +85,7 @@ const EMOTIONS: Emotion[] = [
     id: "laugh",
     label: "Laugh",
     glyph: "◉",
-    narrative: "Rapid burst pattern across motor and limbic channels.",
+    narrative: "Rapid burst pattern across motor and limbic channels. Developed By",
     band: "Beta burst 16–24 Hz",
     freq: 2.6,
     amp: 0.72,

@@ -15,7 +15,7 @@ const CORS = {
 
 const JSON_HEADERS = { "Content-Type": "application/json", ...CORS };
 
-const EMOTIONS = ["rest", "happy", "laugh", "excitement", "stressed", "anger"] as const;
+const EMOTIONS = ["neutral", "rest", "happy", "laugh", "excitement", "stressed", "anger"] as const;
 const ROW_ID = "default";
 
 export const Route = createFileRoute("/api/public/neuro")({
@@ -83,7 +83,7 @@ export const Route = createFileRoute("/api/public/neuro")({
             .eq("id", ROW_ID)
             .maybeSingle();
 
-          let emotion = current?.emotion ?? "rest";
+          let emotion = current?.emotion ?? "neutral";
           let bulb = current?.bulb ?? false;
           let intensity = current?.intensity ?? 0.5;
 

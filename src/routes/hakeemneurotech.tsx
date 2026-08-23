@@ -44,6 +44,11 @@ type Emotion = {
   freq: number;
   amp: number;
   noise: number;
+  /** default arousal applied when this channel fires */
+  arousal: number;
+  /** keyboard / HID ring keys that fire this channel directly */
+  keys: string[];
+  ringLabel: string;
   bands: { delta: number; theta: number; alpha: number; beta: number; gamma: number };
 };
 
@@ -57,6 +62,9 @@ const EMOTIONS: Emotion[] = [
     freq: 1.0,
     amp: 0.42,
     noise: 0.05,
+    arousal: 0.25,
+    keys: ["r", "R", "0", "6"],
+    ringLabel: "R key",
     bands: { delta: 0.22, theta: 0.3, alpha: 0.82, beta: 0.25, gamma: 0.12 },
   },
   {
@@ -68,6 +76,9 @@ const EMOTIONS: Emotion[] = [
     freq: 1.5,
     amp: 0.55,
     noise: 0.08,
+    arousal: 0.5,
+    keys: ["ArrowLeft", "1"],
+    ringLabel: "Swipe left",
     bands: { delta: 0.18, theta: 0.34, alpha: 0.62, beta: 0.58, gamma: 0.28 },
   },
   {
@@ -79,6 +90,9 @@ const EMOTIONS: Emotion[] = [
     freq: 2.6,
     amp: 0.72,
     noise: 0.16,
+    arousal: 0.68,
+    keys: ["ArrowRight", "2"],
+    ringLabel: "Swipe right",
     bands: { delta: 0.14, theta: 0.28, alpha: 0.4, beta: 0.86, gamma: 0.52 },
   },
   {
@@ -90,6 +104,9 @@ const EMOTIONS: Emotion[] = [
     freq: 3.4,
     amp: 0.8,
     noise: 0.2,
+    arousal: 0.82,
+    keys: ["ArrowUp", "3"],
+    ringLabel: "Swipe up",
     bands: { delta: 0.12, theta: 0.24, alpha: 0.32, beta: 0.78, gamma: 0.92 },
   },
   {
@@ -101,6 +118,9 @@ const EMOTIONS: Emotion[] = [
     freq: 3.0,
     amp: 0.6,
     noise: 0.3,
+    arousal: 0.74,
+    keys: ["s", "S", "5"],
+    ringLabel: "S key",
     bands: { delta: 0.2, theta: 0.44, alpha: 0.2, beta: 0.9, gamma: 0.46 },
   },
   {
@@ -112,9 +132,13 @@ const EMOTIONS: Emotion[] = [
     freq: 4.0,
     amp: 0.95,
     noise: 0.4,
+    arousal: 0.92,
+    keys: ["ArrowDown", "4"],
+    ringLabel: "Swipe down",
     bands: { delta: 0.26, theta: 0.5, alpha: 0.14, beta: 0.96, gamma: 0.66 },
   },
 ];
+
 
 const byId = (id: string): Emotion => EMOTIONS.find((e) => e.id === id) ?? EMOTIONS[0];
 
@@ -158,6 +182,7 @@ function NeuroConsole() {
     [],
   );
 
+  const bulbRef = useRef(false);
   const localEditAt = useRef(0);
   const applyState = useCallback(
     (s: { emotion?: string; bulb?: boolean; intensity?: number; eeg?: number[] } | null) => {
@@ -165,7 +190,7 @@ function NeuroConsole() {
       // Don't let a stale poll response undo an action the user just made.
       if (Date.now() - localEditAt.current < 2500) return;
       if (s.emotion) setEmotionId(s.emotion as EmotionId);
-      if (typeof s.bulb === "boolean") setBulb(s.bulb);
+      if (typeof s.bulb === "boolean") { bulbRef.current = s.bulb; setBulb(s.bulb); }
       if (typeof s.intensity === "number") setIntensity(s.intensity);
       if (Array.isArray(s.eeg) && s.eeg.length > 8) setRemoteEeg(s.eeg);
     },
@@ -198,41 +223,44 @@ function NeuroConsole() {
 
   /* ---- actions ------------------------------------------------------ */
 
+  const [decoding, setDecoding] = useState(true);
+  const [pulseKey, setPulseKey] = useState(0);
+
   const setEmotion = useCallback(
     (id: EmotionId, src: string) => {
       localEditAt.current = Date.now();
       setEmotionId(id);
+      setPulseKey((k) => k + 1);
+      setIntensity(byId(id).arousal);
       setLastEvent(`${byId(id).label.toLowerCase()} detected`);
       pushLog(`EEG classifier → ${byId(id).label.toUpperCase()}  [${src}]`);
-      void post({ emotion: id });
+      void post({ emotion: id, intensity: byId(id).arousal });
     },
     [post, pushLog],
-  );
-
-  const cycleEmotion = useCallback(
-    (dir: 1 | -1, src: string) => {
-      const i = EMOTIONS.findIndex((e) => e.id === emotionId);
-      const next = EMOTIONS[(i + dir + EMOTIONS.length) % EMOTIONS.length];
-      setEmotion(next.id, src);
-    },
-    [emotionId, setEmotion],
   );
 
   const toggleBulb = useCallback(
     (src: string) => {
       localEditAt.current = Date.now();
-      setBulb((b) => {
-        const nb = !b;
-        pushLog(`Motor-imagery intent → RELAY GPIO26 ${nb ? "HIGH (bulb ON)" : "LOW (bulb OFF)"}  [${src}]`);
-        setLastEvent(nb ? "thought command: light on" : "thought command: light off");
-        void post({ toggle_bulb: true });
-        return nb;
-      });
+      const nb = !bulbRef.current;
+      bulbRef.current = nb;
+      setBulb(nb);
+      pushLog(`Motor-imagery intent → RELAY GPIO26 ${nb ? "HIGH (bulb ON)" : "LOW (bulb OFF)"}  [${src}]`);
+      setLastEvent(nb ? "thought command: light on" : "thought command: light off");
+      void post({ toggle_bulb: true });
     },
     [post, pushLog],
   );
 
-  /* ---- HID ring / keyboard mapping ---------------------------------- */
+  const toggleDecoding = useCallback(() => {
+    setDecoding((d) => {
+      pushLog(d ? "Decoder halted — cortical stream paused" : "Decoder armed — acquiring cortical stream");
+      setLastEvent(d ? "decoder stopped" : "decoding brain activity…");
+      return !d;
+    });
+  }, [pushLog]);
+
+  /* ---- HID ring / keyboard input ------------------------------------ */
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -240,31 +268,22 @@ function NeuroConsole() {
       if (k === " " || k === "Enter") {
         e.preventDefault();
         toggleBulb("ring · middle");
-      } else if (k === "ArrowRight") {
+        return;
+      }
+      if (k.toLowerCase() === "d") {
         e.preventDefault();
-        cycleEmotion(1, "ring · right");
-      } else if (k === "ArrowLeft") {
+        toggleDecoding();
+        return;
+      }
+      const byKey = EMOTIONS.find((em) => em.keys.includes(k));
+      if (byKey) {
         e.preventDefault();
-        cycleEmotion(-1, "ring · left");
-      } else if (k === "ArrowUp") {
-        e.preventDefault();
-        setIntensity((v) => {
-          const nv = Math.min(1, +(v + 0.1).toFixed(2));
-          void post({ intensity: nv });
-          return nv;
-        });
-      } else if (k === "ArrowDown") {
-        e.preventDefault();
-        setIntensity((v) => {
-          const nv = Math.max(0, +(v - 0.1).toFixed(2));
-          void post({ intensity: nv });
-          return nv;
-        });
+        setEmotion(byKey.id, `ring · ${byKey.ringLabel.toLowerCase()}`);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleEmotion, toggleBulb, post]);
+  }, [toggleBulb, toggleDecoding, setEmotion]);
 
   const themeClass = `neuro neuro-emo-${emotionId}`;
 
@@ -275,30 +294,37 @@ function NeuroConsole() {
 
         <section className="mt-8 grid gap-5 lg:grid-cols-12">
           <div className="min-w-0 lg:col-span-7">
-            <CorticalMap emotion={emotion} intensity={intensity} bulb={bulb} />
+            <CorticalMap emotion={emotion} intensity={decoding ? intensity : 0.08} bulb={bulb} />
           </div>
-          <div className="grid min-w-0 gap-5 lg:col-span-5">
-            <EmotionPanel emotion={emotion} intensity={intensity} lastEvent={lastEvent} />
+          <div className="min-w-0 lg:col-span-5">
             <BulbPanel bulb={bulb} onToggle={() => toggleBulb("console")} />
           </div>
         </section>
 
+        <section className="mt-5">
+          <DecoderPole
+            emotion={emotion}
+            intensity={intensity}
+            lastEvent={lastEvent}
+            decoding={decoding}
+            pulseKey={pulseKey}
+            onSelect={(id) => setEmotion(id, "console")}
+            onToggleDecoding={toggleDecoding}
+          />
+        </section>
+
         <section className="mt-5 grid gap-5 lg:grid-cols-12">
           <div className="min-w-0 lg:col-span-8">
-            <EegPanel emotion={emotion} intensity={intensity} remote={remoteEeg} />
+            <EegPanel
+              emotion={emotion}
+              intensity={intensity}
+              remote={remoteEeg}
+              decoding={decoding}
+            />
           </div>
           <div className="grid min-w-0 gap-5 lg:col-span-4">
             <BandPanel emotion={emotion} intensity={intensity} />
             <LogPanel log={log} />
-          </div>
-        </section>
-
-        <section className="mt-5 grid gap-5 lg:grid-cols-12">
-          <div className="min-w-0 lg:col-span-7">
-            <EmotionSelector active={emotionId} onSelect={(id) => setEmotion(id, "console")} />
-          </div>
-          <div className="min-w-0 lg:col-span-5">
-            <RingMapPanel />
           </div>
         </section>
 
@@ -307,6 +333,7 @@ function NeuroConsole() {
     </main>
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Pieces                                                              */
@@ -509,59 +536,170 @@ function CorticalMap({
   );
 }
 
-function EmotionPanel({
+/** One consolidated pole: live decoded state + the emotion channel bank. */
+function DecoderPole({
   emotion,
   intensity,
   lastEvent,
+  decoding,
+  pulseKey,
+  onSelect,
+  onToggleDecoding,
 }: {
   emotion: Emotion;
   intensity: number;
   lastEvent: string;
+  decoding: boolean;
+  pulseKey: number;
+  onSelect: (id: EmotionId) => void;
+  onToggleDecoding: () => void;
 }) {
   const pct = Math.round(intensity * 100);
   const circ = 2 * Math.PI * 44;
+
   return (
-    <Panel title="Detected emotional state" hint="classifier confidence">
-      <div className="flex items-center gap-5">
-        <div className="relative h-28 w-28 shrink-0">
-          <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-            <circle cx="50" cy="50" r="44" fill="none" stroke="var(--neuro-line)" strokeWidth="7" />
-            <circle
-              cx="50"
-              cy="50"
-              r="44"
-              fill="none"
-              stroke="var(--emo)"
-              strokeWidth="7"
-              strokeLinecap="round"
-              strokeDasharray={circ}
-              strokeDashoffset={circ * (1 - Math.max(0.08, intensity))}
-              style={{ transition: "stroke-dashoffset 600ms ease" }}
-            />
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-3xl neuro-pulse" style={{ color: "var(--emo)" }}>
-              {emotion.glyph}
-            </span>
+    <Panel
+      title="Emotion decoding"
+      hint={decoding ? "classifier running" : "classifier halted"}
+      className="overflow-hidden"
+    >
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* live readout */}
+        <div className="min-w-0 lg:col-span-5">
+          <div className="flex items-center gap-5">
+            <div className="relative h-32 w-32 shrink-0">
+              <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                <circle cx="50" cy="50" r="44" fill="none" stroke="var(--neuro-line)" strokeWidth="7" />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="44"
+                  fill="none"
+                  stroke="var(--emo)"
+                  strokeWidth="7"
+                  strokeLinecap="round"
+                  strokeDasharray={circ}
+                  strokeDashoffset={circ * (1 - Math.max(0.08, intensity))}
+                  style={{ transition: "stroke-dashoffset 600ms ease" }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span
+                  key={pulseKey}
+                  className="neuro-pop text-4xl"
+                  style={{ color: "var(--emo)" }}
+                >
+                  {emotion.glyph}
+                </span>
+              </div>
+              {decoding ? (
+                <span
+                  className="neuro-ripple pointer-events-none absolute inset-0 rounded-full"
+                  style={{ border: "1px solid var(--emo)" }}
+                />
+              ) : null}
+            </div>
+            <div className="min-w-0">
+              <p key={`${pulseKey}-l`} className="neuro-pop text-4xl font-semibold tracking-tight" style={{ color: "var(--emo)" }}>
+                {emotion.label}
+              </p>
+              <p className="mt-1 text-sm opacity-70">
+                Arousal {pct}% · {emotion.band}
+              </p>
+              <p className="mt-2 truncate text-xs uppercase tracking-[0.16em] opacity-50">
+                {decoding ? lastEvent : "decoder stopped"}
+              </p>
+            </div>
           </div>
+
+          <p className="mt-4 text-sm leading-relaxed opacity-70">{emotion.narrative}</p>
+
+          <button
+            type="button"
+            onClick={onToggleDecoding}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] transition-transform active:scale-[0.98]"
+            style={{
+              background: decoding ? "var(--emo)" : "var(--emo-soft)",
+              color: decoding ? "var(--neuro-bg-deep)" : "var(--neuro-fg)",
+              border: "1px solid var(--emo)",
+            }}
+          >
+            <span
+              className={`inline-block h-2.5 w-2.5 rounded-full ${decoding ? "neuro-pulse" : ""}`}
+              style={{ background: decoding ? "var(--neuro-bg-deep)" : "var(--emo)" }}
+            />
+            {decoding ? "Stop decoding" : "Start decoding"}
+          </button>
         </div>
-        <div className="min-w-0">
-          <p className="text-3xl font-semibold tracking-tight" style={{ color: "var(--emo)" }}>
-            {emotion.label}
+
+        {/* channel bank */}
+        <div className="min-w-0 lg:col-span-7">
+          <p className="mb-3 text-[0.68rem] uppercase tracking-[0.22em] opacity-55">
+            Detected channels — fires on ring input
           </p>
-          <p className="mt-1 text-sm opacity-70">Arousal {pct}% · {emotion.band}</p>
-          <p className="mt-2 truncate text-xs uppercase tracking-[0.16em] opacity-50">{lastEvent}</p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {EMOTIONS.map((e) => {
+              const on = e.id === emotion.id;
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => onSelect(e.id)}
+                  className={`neuro-emo-${e.id} neuro-chip relative overflow-hidden rounded-2xl px-3 py-4 text-left transition-all duration-300 ${
+                    on ? "neuro-pop scale-[1.03]" : "opacity-70 hover:opacity-100"
+                  }`}
+                  style={
+                    on
+                      ? {
+                          borderColor: "var(--emo)",
+                          background: "var(--emo-soft)",
+                          boxShadow: "0 0 0 1px var(--emo), 0 12px 34px -12px var(--emo)",
+                        }
+                      : undefined
+                  }
+                >
+                  <span
+                    className={`text-2xl ${on ? "neuro-pulse" : ""}`}
+                    style={{ color: "var(--emo)" }}
+                  >
+                    {e.glyph}
+                  </span>
+                  <span className="mt-1 block text-sm font-semibold">{e.label}</span>
+                  <span className="block text-[0.64rem] uppercase tracking-[0.14em] opacity-55">
+                    {e.band}
+                  </span>
+                  <span
+                    className="mt-2 block text-[0.62rem] uppercase tracking-[0.16em]"
+                    style={{ color: on ? "var(--emo)" : undefined, opacity: on ? 0.9 : 0.4 }}
+                  >
+                    {e.ringLabel}
+                  </span>
+                  {on ? (
+                    <span
+                      className="neuro-ripple pointer-events-none absolute inset-0 rounded-2xl"
+                      style={{ border: "1px solid var(--emo)" }}
+                    />
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </Panel>
   );
 }
 
+
 function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) {
   return (
     <Panel title="Thought-actuated lamp" hint="ESP32 · relay GPIO 26">
-      <div className="flex items-center gap-5">
-        <svg viewBox="0 0 64 96" className={`h-24 w-16 shrink-0 ${bulb ? "neuro-lit" : ""}`} aria-hidden="true">
+      <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
+        <svg
+          viewBox="0 0 64 96"
+          className={`h-44 w-32 shrink-0 sm:h-48 sm:w-36 ${bulb ? "neuro-lit" : ""}`}
+          aria-hidden="true"
+        >
           <defs>
             <radialGradient id="bulbGlow" cx="50%" cy="38%" r="55%">
               <stop offset="0%" stopColor="var(--emo)" stopOpacity={bulb ? 0.95 : 0.06} />
@@ -588,8 +726,8 @@ function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) 
           <rect x="24" y="71" width="16" height="9" rx="3" fill="var(--emo)" opacity="0.35" />
         </svg>
 
-        <div className="min-w-0 flex-1">
-          <p className="text-2xl font-semibold" style={{ color: bulb ? "var(--emo)" : undefined }}>
+        <div className="min-w-0 flex-1 text-center sm:text-left">
+          <p className="text-3xl font-semibold" style={{ color: bulb ? "var(--emo)" : undefined }}>
             {bulb ? "Lamp ON" : "Lamp OFF"}
           </p>
           <p className="mt-1 text-sm opacity-65">
@@ -598,7 +736,7 @@ function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) 
           <button
             type="button"
             onClick={onToggle}
-            className="mt-3 w-full rounded-xl px-4 py-2.5 text-sm font-medium transition-transform active:scale-[0.98]"
+            className="mt-4 w-full rounded-xl px-4 py-3 text-sm font-medium transition-transform active:scale-[0.98]"
             style={{
               background: bulb ? "var(--emo)" : "var(--emo-soft)",
               color: bulb ? "var(--neuro-bg-deep)" : "var(--neuro-fg)",
@@ -613,18 +751,21 @@ function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) 
   );
 }
 
+
 function EegPanel({
   emotion,
   intensity,
   remote,
+  decoding,
 }: {
   emotion: Emotion;
   intensity: number;
   remote: number[] | null;
+  decoding: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
-  const stateRef = useRef({ emotion, intensity, remote });
-  stateRef.current = { emotion, intensity, remote };
+  const stateRef = useRef({ emotion, intensity, remote, decoding });
+  stateRef.current = { emotion, intensity, remote, decoding };
 
   useEffect(() => {
     const canvas = ref.current;
@@ -635,10 +776,22 @@ function EegPanel({
     const CH = 4;
     const N = 240;
     const buffers: number[][] = Array.from({ length: CH }, () => new Array(N).fill(0));
+    // Per-channel slow-drifting oscillator parameters → the trace never repeats.
+    const drift = Array.from({ length: CH }, (_, c) => ({
+      f1: 0.8 + c * 0.31,
+      f2: 1.9 + c * 0.47,
+      f3: 3.3 + c * 0.19,
+      p1: Math.random() * 6.28,
+      p2: Math.random() * 6.28,
+      p3: Math.random() * 6.28,
+      burst: 0,
+      nextBurst: 40 + Math.random() * 200,
+    }));
     let raf = 0;
     let w = 0;
     let h = 0;
     let t = 0;
+    let frame = 0;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
 
     const resize = () => {
@@ -657,19 +810,46 @@ function EegPanel({
     const grid = () => getComputedStyle(canvas).getPropertyValue("--neuro-grid").trim() || "#2226";
 
     const draw = () => {
-      const { emotion: em, intensity: inten, remote: rem } = stateRef.current;
-      t += 0.06 + em.freq * 0.03;
+      const { emotion: em, intensity: inten, remote: rem, decoding: on } = stateRef.current;
+      frame++;
+      const gain = on ? 1 : 0.12;
+      t += 0.05 + em.freq * 0.03 * gain;
 
       for (let c = 0; c < CH; c++) {
-        const k = 1 + c * 0.55;
-        // If the ESP32 streamed real samples, ride on them; else synthesise.
+        const d = drift[c];
+        // Slowly wander the oscillator frequencies and phases (non-stationary EEG).
+        d.f1 += (Math.random() - 0.5) * 0.006;
+        d.f2 += (Math.random() - 0.5) * 0.01;
+        d.f3 += (Math.random() - 0.5) * 0.014;
+        d.f1 = Math.min(1.6, Math.max(0.5, d.f1));
+        d.f2 = Math.min(3.2, Math.max(1.1, d.f2));
+        d.f3 = Math.min(5.5, Math.max(2.0, d.f3));
+        d.p1 += 0.004;
+        d.p2 -= 0.007;
+        d.p3 += 0.011;
+
+        // Occasional spindles / spikes, more frequent at high arousal.
+        if (on && --d.nextBurst <= 0) {
+          d.burst = 12 + Math.random() * 26;
+          d.nextBurst = 60 + Math.random() * (320 - inten * 220);
+        }
+        let burstAmp = 0;
+        if (d.burst > 0) {
+          d.burst--;
+          burstAmp = Math.sin(d.burst * 0.7) * (0.35 + inten * 0.7) * em.amp;
+        }
+
+        const envelope = 0.65 + 0.35 * Math.sin(t * 0.19 + c * 1.7);
         const devSample =
           rem && rem.length ? rem[(Math.floor(t * 6) + c * 13) % rem.length] * 0.6 : 0;
         const v =
-          devSample +
-          Math.sin(t * em.freq * k) * em.amp * (0.5 + inten) +
-          Math.sin(t * em.freq * k * 2.7 + c) * em.amp * 0.32 +
-          (Math.random() - 0.5) * em.noise * 2;
+          (devSample +
+            Math.sin(t * em.freq * d.f1 + d.p1) * em.amp * (0.45 + inten) * envelope +
+            Math.sin(t * em.freq * d.f2 + d.p2) * em.amp * 0.34 +
+            Math.sin(t * em.freq * d.f3 + d.p3) * em.amp * 0.18 * (0.4 + inten) +
+            burstAmp +
+            (Math.random() - 0.5) * em.noise * 2) *
+          gain;
         buffers[c].push(v);
         buffers[c].shift();
       }
@@ -679,7 +859,8 @@ function EegPanel({
 
       ctx.strokeStyle = grid();
       ctx.lineWidth = 1;
-      for (let x = 0; x <= w; x += 48) {
+      const off = (frame * 0.6) % 48;
+      for (let x = -off; x <= w; x += 48) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, h);
@@ -693,6 +874,7 @@ function EegPanel({
       }
 
       const col = accent();
+      ctx.shadowColor = col;
       for (let c = 0; c < CH; c++) {
         const mid = rowH * c + rowH / 2;
         ctx.beginPath();
@@ -703,10 +885,12 @@ function EegPanel({
           else ctx.lineTo(x, y);
         }
         ctx.strokeStyle = col;
+        ctx.shadowBlur = 8;
         ctx.globalAlpha = 0.95 - c * 0.16;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
+      ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
       raf = requestAnimationFrame(draw);
     };
@@ -720,7 +904,13 @@ function EegPanel({
   return (
     <Panel
       title="EEG waveform stream"
-      hint={remote ? "ESP32 telemetry · 256 Hz" : "synthesised montage · 256 Hz"}
+      hint={
+        !decoding
+          ? "decoder paused"
+          : remote
+            ? "ESP32 telemetry · 256 Hz"
+            : "synthesised montage · 256 Hz"
+      }
     >
       <div className="rounded-xl p-2" style={{ background: "oklch(0 0 0 / 22%)" }}>
         <canvas ref={ref} className="block h-56 w-full" />
@@ -734,6 +924,7 @@ function EegPanel({
     </Panel>
   );
 }
+
 
 function BandPanel({ emotion, intensity }: { emotion: Emotion; intensity: number }) {
   const rows = useMemo(
@@ -781,72 +972,6 @@ function LogPanel({ log }: { log: string[] }) {
   );
 }
 
-function EmotionSelector({
-  active,
-  onSelect,
-}: {
-  active: EmotionId;
-  onSelect: (id: EmotionId) => void;
-}) {
-  return (
-    <Panel title="Emotion channel bank" hint="auto-selected by classifier">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {EMOTIONS.map((e) => {
-          const on = e.id === active;
-          return (
-            <button
-              key={e.id}
-              type="button"
-              onClick={() => onSelect(e.id)}
-              className={`neuro-emo-${e.id} neuro-chip rounded-xl px-3 py-3 text-left transition-all`}
-              style={
-                on
-                  ? { borderColor: "var(--emo)", background: "var(--emo-soft)" }
-                  : undefined
-              }
-            >
-              <span className="text-lg" style={{ color: "var(--emo)" }}>
-                {e.glyph}
-              </span>
-              <span className="mt-1 block text-sm font-medium">{e.label}</span>
-              <span className="block text-[0.66rem] uppercase tracking-[0.14em] opacity-55">{e.band}</span>
-            </button>
-          );
-        })}
-      </div>
-    </Panel>
-  );
-}
-
-function RingMapPanel() {
-  const rows = [
-    ["Middle click / Space", "Toggle lamp relay (GPIO 26)"],
-    ["Swipe right / →", "Next decoded emotion"],
-    ["Swipe left / ←", "Previous decoded emotion"],
-    ["Swipe up / ↑", "Raise arousal intensity"],
-    ["Swipe down / ↓", "Lower arousal intensity"],
-  ];
-  return (
-    <Panel title="BLE HID ring mapping" hint="paired to ESP32 / phone">
-      <ul className="space-y-2.5 text-sm">
-        {rows.map(([k, v]) => (
-          <li key={k} className="flex items-start justify-between gap-4">
-            <span className="neuro-chip rounded-md px-2 py-1 font-mono text-[0.7rem]">{k}</span>
-            <span className="text-right opacity-70">{v}</span>
-          </li>
-        ))}
-      </ul>
-      <a
-        href="/firmware/axon_neuro_bulb.ino"
-        download
-        className="mt-4 block rounded-xl px-4 py-2.5 text-center text-sm font-medium transition-transform active:scale-[0.98]"
-        style={{ background: "var(--emo-soft)", border: "1px solid var(--emo)", color: "var(--neuro-fg)" }}
-      >
-        Download ESP32 firmware (.ino)
-      </a>
-    </Panel>
-  );
-}
 
 function Footer() {
   return (
@@ -854,9 +979,18 @@ function Footer() {
       className="mt-10 border-t pt-6 text-center text-xs leading-relaxed opacity-70"
       style={{ borderColor: "var(--neuro-line)" }}
     >
+      <a
+        href="/firmware/axon_neuro_bulb.ino"
+        download
+        className="mx-auto mb-6 block w-full max-w-xs rounded-xl px-4 py-2.5 text-center text-sm font-medium transition-transform active:scale-[0.98]"
+        style={{ background: "var(--emo-soft)", border: "1px solid var(--emo)", color: "var(--neuro-fg)" }}
+      >
+        Download ESP32 firmware (.ino)
+      </a>
       <p className="font-medium tracking-[0.12em] uppercase" style={{ color: "var(--emo)" }}>
         Axon Dynamics
       </p>
+
       <p className="mt-1">Developed by Hakeem Kurfi · Katsina, Nigeria</p>
       <p className="mt-1 opacity-70">
         Harbin Engineering University — Department of Science and Intelligent Systems · Class of AI ·

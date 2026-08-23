@@ -198,24 +198,20 @@ function NeuroConsole() {
 
   /* ---- actions ------------------------------------------------------ */
 
+  const [decoding, setDecoding] = useState(true);
+  const [pulseKey, setPulseKey] = useState(0);
+
   const setEmotion = useCallback(
     (id: EmotionId, src: string) => {
       localEditAt.current = Date.now();
       setEmotionId(id);
+      setPulseKey((k) => k + 1);
+      setIntensity(byId(id).arousal);
       setLastEvent(`${byId(id).label.toLowerCase()} detected`);
       pushLog(`EEG classifier → ${byId(id).label.toUpperCase()}  [${src}]`);
-      void post({ emotion: id });
+      void post({ emotion: id, intensity: byId(id).arousal });
     },
     [post, pushLog],
-  );
-
-  const cycleEmotion = useCallback(
-    (dir: 1 | -1, src: string) => {
-      const i = EMOTIONS.findIndex((e) => e.id === emotionId);
-      const next = EMOTIONS[(i + dir + EMOTIONS.length) % EMOTIONS.length];
-      setEmotion(next.id, src);
-    },
-    [emotionId, setEmotion],
   );
 
   const toggleBulb = useCallback(
@@ -232,7 +228,15 @@ function NeuroConsole() {
     [post, pushLog],
   );
 
-  /* ---- HID ring / keyboard mapping ---------------------------------- */
+  const toggleDecoding = useCallback(() => {
+    setDecoding((d) => {
+      pushLog(d ? "Decoder halted — cortical stream paused" : "Decoder armed — acquiring cortical stream");
+      setLastEvent(d ? "decoder stopped" : "decoding brain activity…");
+      return !d;
+    });
+  }, [pushLog]);
+
+  /* ---- HID ring / keyboard input ------------------------------------ */
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -240,31 +244,22 @@ function NeuroConsole() {
       if (k === " " || k === "Enter") {
         e.preventDefault();
         toggleBulb("ring · middle");
-      } else if (k === "ArrowRight") {
+        return;
+      }
+      if (k.toLowerCase() === "d") {
         e.preventDefault();
-        cycleEmotion(1, "ring · right");
-      } else if (k === "ArrowLeft") {
+        toggleDecoding();
+        return;
+      }
+      const byKey = EMOTIONS.find((em) => em.keys.includes(k));
+      if (byKey) {
         e.preventDefault();
-        cycleEmotion(-1, "ring · left");
-      } else if (k === "ArrowUp") {
-        e.preventDefault();
-        setIntensity((v) => {
-          const nv = Math.min(1, +(v + 0.1).toFixed(2));
-          void post({ intensity: nv });
-          return nv;
-        });
-      } else if (k === "ArrowDown") {
-        e.preventDefault();
-        setIntensity((v) => {
-          const nv = Math.max(0, +(v - 0.1).toFixed(2));
-          void post({ intensity: nv });
-          return nv;
-        });
+        setEmotion(byKey.id, `ring · ${byKey.ringLabel.toLowerCase()}`);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cycleEmotion, toggleBulb, post]);
+  }, [toggleBulb, toggleDecoding, setEmotion]);
 
   const themeClass = `neuro neuro-emo-${emotionId}`;
 
@@ -275,30 +270,37 @@ function NeuroConsole() {
 
         <section className="mt-8 grid gap-5 lg:grid-cols-12">
           <div className="min-w-0 lg:col-span-7">
-            <CorticalMap emotion={emotion} intensity={intensity} bulb={bulb} />
+            <CorticalMap emotion={emotion} intensity={decoding ? intensity : 0.08} bulb={bulb} />
           </div>
-          <div className="grid min-w-0 gap-5 lg:col-span-5">
-            <EmotionPanel emotion={emotion} intensity={intensity} lastEvent={lastEvent} />
+          <div className="min-w-0 lg:col-span-5">
             <BulbPanel bulb={bulb} onToggle={() => toggleBulb("console")} />
           </div>
         </section>
 
+        <section className="mt-5">
+          <DecoderPole
+            emotion={emotion}
+            intensity={intensity}
+            lastEvent={lastEvent}
+            decoding={decoding}
+            pulseKey={pulseKey}
+            onSelect={(id) => setEmotion(id, "console")}
+            onToggleDecoding={toggleDecoding}
+          />
+        </section>
+
         <section className="mt-5 grid gap-5 lg:grid-cols-12">
           <div className="min-w-0 lg:col-span-8">
-            <EegPanel emotion={emotion} intensity={intensity} remote={remoteEeg} />
+            <EegPanel
+              emotion={emotion}
+              intensity={intensity}
+              remote={remoteEeg}
+              decoding={decoding}
+            />
           </div>
           <div className="grid min-w-0 gap-5 lg:col-span-4">
             <BandPanel emotion={emotion} intensity={intensity} />
             <LogPanel log={log} />
-          </div>
-        </section>
-
-        <section className="mt-5 grid gap-5 lg:grid-cols-12">
-          <div className="min-w-0 lg:col-span-7">
-            <EmotionSelector active={emotionId} onSelect={(id) => setEmotion(id, "console")} />
-          </div>
-          <div className="min-w-0 lg:col-span-5">
-            <RingMapPanel />
           </div>
         </section>
 
@@ -307,6 +309,7 @@ function NeuroConsole() {
     </main>
   );
 }
+
 
 /* ------------------------------------------------------------------ */
 /* Pieces                                                              */

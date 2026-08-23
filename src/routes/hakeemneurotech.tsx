@@ -44,6 +44,11 @@ type Emotion = {
   freq: number;
   amp: number;
   noise: number;
+  /** default arousal applied when this channel fires */
+  arousal: number;
+  /** keyboard / HID ring keys that fire this channel directly */
+  keys: string[];
+  ringLabel: string;
   bands: { delta: number; theta: number; alpha: number; beta: number; gamma: number };
 };
 
@@ -57,6 +62,9 @@ const EMOTIONS: Emotion[] = [
     freq: 1.0,
     amp: 0.42,
     noise: 0.05,
+    arousal: 0.25,
+    keys: ["r", "R", "0", "6"],
+    ringLabel: "R key",
     bands: { delta: 0.22, theta: 0.3, alpha: 0.82, beta: 0.25, gamma: 0.12 },
   },
   {
@@ -68,6 +76,9 @@ const EMOTIONS: Emotion[] = [
     freq: 1.5,
     amp: 0.55,
     noise: 0.08,
+    arousal: 0.5,
+    keys: ["ArrowLeft", "1"],
+    ringLabel: "Swipe left",
     bands: { delta: 0.18, theta: 0.34, alpha: 0.62, beta: 0.58, gamma: 0.28 },
   },
   {
@@ -79,6 +90,9 @@ const EMOTIONS: Emotion[] = [
     freq: 2.6,
     amp: 0.72,
     noise: 0.16,
+    arousal: 0.68,
+    keys: ["ArrowRight", "2"],
+    ringLabel: "Swipe right",
     bands: { delta: 0.14, theta: 0.28, alpha: 0.4, beta: 0.86, gamma: 0.52 },
   },
   {
@@ -90,6 +104,9 @@ const EMOTIONS: Emotion[] = [
     freq: 3.4,
     amp: 0.8,
     noise: 0.2,
+    arousal: 0.82,
+    keys: ["ArrowUp", "3"],
+    ringLabel: "Swipe up",
     bands: { delta: 0.12, theta: 0.24, alpha: 0.32, beta: 0.78, gamma: 0.92 },
   },
   {
@@ -101,6 +118,9 @@ const EMOTIONS: Emotion[] = [
     freq: 3.0,
     amp: 0.6,
     noise: 0.3,
+    arousal: 0.74,
+    keys: ["s", "S", "5"],
+    ringLabel: "S key",
     bands: { delta: 0.2, theta: 0.44, alpha: 0.2, beta: 0.9, gamma: 0.46 },
   },
   {
@@ -112,9 +132,13 @@ const EMOTIONS: Emotion[] = [
     freq: 4.0,
     amp: 0.95,
     noise: 0.4,
+    arousal: 0.92,
+    keys: ["ArrowDown", "4"],
+    ringLabel: "Swipe down",
     bands: { delta: 0.26, theta: 0.5, alpha: 0.14, beta: 0.96, gamma: 0.66 },
   },
 ];
+
 
 const byId = (id: string): Emotion => EMOTIONS.find((e) => e.id === id) ?? EMOTIONS[0];
 

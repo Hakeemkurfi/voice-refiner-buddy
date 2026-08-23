@@ -164,6 +164,7 @@
   color: var(--neuro-fg);
 }
 
+.neuro-emo-neutral    { --emo: oklch(0.78 0.03 240); --emo-soft: oklch(0.78 0.03 240 / 16%); }
 .neuro-emo-rest       { --emo: oklch(0.80 0.11 196); --emo-soft: oklch(0.80 0.11 196 / 18%); }
 .neuro-emo-happy      { --emo: oklch(0.84 0.16 150); --emo-soft: oklch(0.84 0.16 150 / 18%); }
 .neuro-emo-laugh      { --emo: oklch(0.87 0.17 95);  --emo-soft: oklch(0.87 0.17 95 / 18%); }

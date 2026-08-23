@@ -32,7 +32,7 @@ export const Route = createFileRoute("/hakeemneurotech")({
 /* Emotion model                                                       */
 /* ------------------------------------------------------------------ */
 
-type EmotionId = "rest" | "happy" | "laugh" | "excitement" | "stressed" | "anger";
+type EmotionId = "neutral" | "rest" | "happy" | "laugh" | "excitement" | "stressed" | "anger";
 
 type Emotion = {
   id: EmotionId;
@@ -54,6 +54,20 @@ type Emotion = {
 
 const EMOTIONS: Emotion[] = [
   {
+    id: "neutral",
+    label: "Neutral",
+    glyph: "◌",
+    narrative: "Baseline cortical activity. No affective state decoded yet — awaiting ring input.",
+    band: "Mixed baseline",
+    freq: 0.8,
+    amp: 0.3,
+    noise: 0.04,
+    arousal: 0.18,
+    keys: ["n", "N", "0"],
+    ringLabel: "N key",
+    bands: { delta: 0.3, theta: 0.3, alpha: 0.5, beta: 0.3, gamma: 0.14 },
+  },
+  {
     id: "rest",
     label: "Rest",
     glyph: "◍",
@@ -63,7 +77,7 @@ const EMOTIONS: Emotion[] = [
     amp: 0.42,
     noise: 0.05,
     arousal: 0.25,
-    keys: ["r", "R", "0", "6"],
+    keys: ["r", "R", "6"],
     ringLabel: "R key",
     bands: { delta: 0.22, theta: 0.3, alpha: 0.82, beta: 0.25, gamma: 0.12 },
   },
@@ -147,7 +161,7 @@ const byId = (id: string): Emotion => EMOTIONS.find((e) => e.id === id) ?? EMOTI
 /* ------------------------------------------------------------------ */
 
 function NeuroConsole() {
-  const [emotionId, setEmotionId] = useState<EmotionId>("rest");
+  const [emotionId, setEmotionId] = useState<EmotionId>("neutral");
   const [bulb, setBulb] = useState(false);
   const [intensity, setIntensity] = useState(0.45);
   const [linked, setLinked] = useState<"offline" | "live">("offline");

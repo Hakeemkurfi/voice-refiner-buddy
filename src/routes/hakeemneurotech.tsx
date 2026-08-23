@@ -536,53 +536,160 @@ function CorticalMap({
   );
 }
 
-function EmotionPanel({
+/** One consolidated pole: live decoded state + the emotion channel bank. */
+function DecoderPole({
   emotion,
   intensity,
   lastEvent,
+  decoding,
+  pulseKey,
+  onSelect,
+  onToggleDecoding,
 }: {
   emotion: Emotion;
   intensity: number;
   lastEvent: string;
+  decoding: boolean;
+  pulseKey: number;
+  onSelect: (id: EmotionId) => void;
+  onToggleDecoding: () => void;
 }) {
   const pct = Math.round(intensity * 100);
   const circ = 2 * Math.PI * 44;
+
   return (
-    <Panel title="Detected emotional state" hint="classifier confidence">
-      <div className="flex items-center gap-5">
-        <div className="relative h-28 w-28 shrink-0">
-          <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-            <circle cx="50" cy="50" r="44" fill="none" stroke="var(--neuro-line)" strokeWidth="7" />
-            <circle
-              cx="50"
-              cy="50"
-              r="44"
-              fill="none"
-              stroke="var(--emo)"
-              strokeWidth="7"
-              strokeLinecap="round"
-              strokeDasharray={circ}
-              strokeDashoffset={circ * (1 - Math.max(0.08, intensity))}
-              style={{ transition: "stroke-dashoffset 600ms ease" }}
-            />
-          </svg>
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-3xl neuro-pulse" style={{ color: "var(--emo)" }}>
-              {emotion.glyph}
-            </span>
+    <Panel
+      title="Emotion decoding"
+      hint={decoding ? "classifier running" : "classifier halted"}
+      className="overflow-hidden"
+    >
+      <div className="grid gap-6 lg:grid-cols-12">
+        {/* live readout */}
+        <div className="min-w-0 lg:col-span-5">
+          <div className="flex items-center gap-5">
+            <div className="relative h-32 w-32 shrink-0">
+              <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
+                <circle cx="50" cy="50" r="44" fill="none" stroke="var(--neuro-line)" strokeWidth="7" />
+                <circle
+                  cx="50"
+                  cy="50"
+                  r="44"
+                  fill="none"
+                  stroke="var(--emo)"
+                  strokeWidth="7"
+                  strokeLinecap="round"
+                  strokeDasharray={circ}
+                  strokeDashoffset={circ * (1 - Math.max(0.08, intensity))}
+                  style={{ transition: "stroke-dashoffset 600ms ease" }}
+                />
+              </svg>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <span
+                  key={pulseKey}
+                  className="neuro-pop text-4xl"
+                  style={{ color: "var(--emo)" }}
+                >
+                  {emotion.glyph}
+                </span>
+              </div>
+              {decoding ? (
+                <span
+                  className="neuro-ripple pointer-events-none absolute inset-0 rounded-full"
+                  style={{ border: "1px solid var(--emo)" }}
+                />
+              ) : null}
+            </div>
+            <div className="min-w-0">
+              <p key={`${pulseKey}-l`} className="neuro-pop text-4xl font-semibold tracking-tight" style={{ color: "var(--emo)" }}>
+                {emotion.label}
+              </p>
+              <p className="mt-1 text-sm opacity-70">
+                Arousal {pct}% · {emotion.band}
+              </p>
+              <p className="mt-2 truncate text-xs uppercase tracking-[0.16em] opacity-50">
+                {decoding ? lastEvent : "decoder stopped"}
+              </p>
+            </div>
           </div>
+
+          <p className="mt-4 text-sm leading-relaxed opacity-70">{emotion.narrative}</p>
+
+          <button
+            type="button"
+            onClick={onToggleDecoding}
+            className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold uppercase tracking-[0.16em] transition-transform active:scale-[0.98]"
+            style={{
+              background: decoding ? "var(--emo)" : "var(--emo-soft)",
+              color: decoding ? "var(--neuro-bg-deep)" : "var(--neuro-fg)",
+              border: "1px solid var(--emo)",
+            }}
+          >
+            <span
+              className={`inline-block h-2.5 w-2.5 rounded-full ${decoding ? "neuro-pulse" : ""}`}
+              style={{ background: decoding ? "var(--neuro-bg-deep)" : "var(--emo)" }}
+            />
+            {decoding ? "Stop decoding" : "Start decoding"}
+          </button>
         </div>
-        <div className="min-w-0">
-          <p className="text-3xl font-semibold tracking-tight" style={{ color: "var(--emo)" }}>
-            {emotion.label}
+
+        {/* channel bank */}
+        <div className="min-w-0 lg:col-span-7">
+          <p className="mb-3 text-[0.68rem] uppercase tracking-[0.22em] opacity-55">
+            Detected channels — fires on ring input
           </p>
-          <p className="mt-1 text-sm opacity-70">Arousal {pct}% · {emotion.band}</p>
-          <p className="mt-2 truncate text-xs uppercase tracking-[0.16em] opacity-50">{lastEvent}</p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            {EMOTIONS.map((e) => {
+              const on = e.id === emotion.id;
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => onSelect(e.id)}
+                  className={`neuro-emo-${e.id} neuro-chip relative overflow-hidden rounded-2xl px-3 py-4 text-left transition-all duration-300 ${
+                    on ? "neuro-pop scale-[1.03]" : "opacity-70 hover:opacity-100"
+                  }`}
+                  style={
+                    on
+                      ? {
+                          borderColor: "var(--emo)",
+                          background: "var(--emo-soft)",
+                          boxShadow: "0 0 0 1px var(--emo), 0 12px 34px -12px var(--emo)",
+                        }
+                      : undefined
+                  }
+                >
+                  <span
+                    className={`text-2xl ${on ? "neuro-pulse" : ""}`}
+                    style={{ color: "var(--emo)" }}
+                  >
+                    {e.glyph}
+                  </span>
+                  <span className="mt-1 block text-sm font-semibold">{e.label}</span>
+                  <span className="block text-[0.64rem] uppercase tracking-[0.14em] opacity-55">
+                    {e.band}
+                  </span>
+                  <span
+                    className="mt-2 block text-[0.62rem] uppercase tracking-[0.16em]"
+                    style={{ color: on ? "var(--emo)" : undefined, opacity: on ? 0.9 : 0.4 }}
+                  >
+                    {e.ringLabel}
+                  </span>
+                  {on ? (
+                    <span
+                      className="neuro-ripple pointer-events-none absolute inset-0 rounded-2xl"
+                      style={{ border: "1px solid var(--emo)" }}
+                    />
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
     </Panel>
   );
 }
+
 
 function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) {
   return (

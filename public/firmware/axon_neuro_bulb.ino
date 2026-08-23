@@ -66,8 +66,8 @@ static bool  bulbOn        = false;
 static int   emotionIndex  = 0;
 static float intensity     = 0.45f;
 
-static const char* EMOTIONS[] = { "rest", "happy", "laugh", "excitement", "stressed", "anger" };
-static const int   EMOTION_COUNT = 6;
+static const char* EMOTIONS[] = { "neutral", "rest", "happy", "laugh", "excitement", "stressed", "anger" };
+static const int   EMOTION_COUNT = 7;
 
 WebServer localServer(80);
 
@@ -187,9 +187,9 @@ static void postEeg() {
   lastEegPost = millis();
 
   // Band signature per emotion: {freq, amp, noise}
-  const float F[6] = { 1.0, 1.5, 2.6, 3.4, 3.0, 4.0 };
-  const float A[6] = { 0.42, 0.55, 0.72, 0.80, 0.60, 0.95 };
-  const float N[6] = { 0.05, 0.08, 0.16, 0.20, 0.30, 0.40 };
+  const float F[7] = { 0.8, 1.0, 1.5, 2.6, 3.4, 3.0, 4.0 };
+  const float A[7] = { 0.30, 0.42, 0.55, 0.72, 0.80, 0.60, 0.95 };
+  const float N[7] = { 0.04, 0.05, 0.08, 0.16, 0.20, 0.30, 0.40 };
 
   String arr = "[";
   for (int i = 0; i < 64; i++) {

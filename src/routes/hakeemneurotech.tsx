@@ -161,7 +161,7 @@ const byId = (id: string): Emotion => EMOTIONS.find((e) => e.id === id) ?? EMOTI
 /* ------------------------------------------------------------------ */
 
 function NeuroConsole() {
-  const [emotionId, setEmotionId] = useState<EmotionId>("rest");
+  const [emotionId, setEmotionId] = useState<EmotionId>("neutral");
   const [bulb, setBulb] = useState(false);
   const [intensity, setIntensity] = useState(0.45);
   const [linked, setLinked] = useState<"offline" | "live">("offline");

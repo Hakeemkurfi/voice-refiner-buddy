@@ -182,6 +182,7 @@ function NeuroConsole() {
     [],
   );
 
+  const bulbRef = useRef(false);
   const localEditAt = useRef(0);
   const applyState = useCallback(
     (s: { emotion?: string; bulb?: boolean; intensity?: number; eeg?: number[] } | null) => {
@@ -189,7 +190,7 @@ function NeuroConsole() {
       // Don't let a stale poll response undo an action the user just made.
       if (Date.now() - localEditAt.current < 2500) return;
       if (s.emotion) setEmotionId(s.emotion as EmotionId);
-      if (typeof s.bulb === "boolean") setBulb(s.bulb);
+      if (typeof s.bulb === "boolean") { bulbRef.current = s.bulb; setBulb(s.bulb); }
       if (typeof s.intensity === "number") setIntensity(s.intensity);
       if (Array.isArray(s.eeg) && s.eeg.length > 8) setRemoteEeg(s.eeg);
     },
@@ -241,13 +242,12 @@ function NeuroConsole() {
   const toggleBulb = useCallback(
     (src: string) => {
       localEditAt.current = Date.now();
-      setBulb((b) => {
-        const nb = !b;
-        pushLog(`Motor-imagery intent → RELAY GPIO26 ${nb ? "HIGH (bulb ON)" : "LOW (bulb OFF)"}  [${src}]`);
-        setLastEvent(nb ? "thought command: light on" : "thought command: light off");
-        void post({ toggle_bulb: true });
-        return nb;
-      });
+      const nb = !bulbRef.current;
+      bulbRef.current = nb;
+      setBulb(nb);
+      pushLog(`Motor-imagery intent → RELAY GPIO26 ${nb ? "HIGH (bulb ON)" : "LOW (bulb OFF)"}  [${src}]`);
+      setLastEvent(nb ? "thought command: light on" : "thought command: light off");
+      void post({ toggle_bulb: true });
     },
     [post, pushLog],
   );

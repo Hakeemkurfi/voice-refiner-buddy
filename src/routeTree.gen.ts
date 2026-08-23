@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
 import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
+import { Route as ApiPublicNeuroRouteImport } from './routes/api/public/neuro'
 import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
 import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/burst.finalize'
 
@@ -30,6 +31,11 @@ const ApiPublicTriggerRoute = ApiPublicTriggerRouteImport.update({
   path: '/api/public/trigger',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicNeuroRoute = ApiPublicNeuroRouteImport.update({
+  id: '/api/public/neuro',
+  path: '/api/public/neuro',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicEventRoute = ApiPublicEventRouteImport.update({
   id: '/api/public/event',
   path: '/api/public/event',
@@ -44,6 +50,7 @@ const ApiPublicBurstFinalizeRoute = ApiPublicBurstFinalizeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -59,6 +67,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/public/event': typeof ApiPublicEventRoute
+  '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -68,6 +77,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api/public/event'
+    | '/api/public/neuro'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
@@ -75,6 +85,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api/public/event'
+    | '/api/public/neuro'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
@@ -82,6 +93,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api/public/event'
+    | '/api/public/neuro'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
@@ -90,6 +102,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
+  ApiPublicNeuroRoute: typeof ApiPublicNeuroRoute
   ApiPublicTriggerRoute: typeof ApiPublicTriggerRoute
   ApiPublicTtsRoute: typeof ApiPublicTtsRoute
   ApiPublicBurstFinalizeRoute: typeof ApiPublicBurstFinalizeRoute
@@ -118,6 +131,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicTriggerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/neuro': {
+      id: '/api/public/neuro'
+      path: '/api/public/neuro'
+      fullPath: '/api/public/neuro'
+      preLoaderRoute: typeof ApiPublicNeuroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/event': {
       id: '/api/public/event'
       path: '/api/public/event'
@@ -138,6 +158,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
+  ApiPublicNeuroRoute: ApiPublicNeuroRoute,
   ApiPublicTriggerRoute: ApiPublicTriggerRoute,
   ApiPublicTtsRoute: ApiPublicTtsRoute,
   ApiPublicBurstFinalizeRoute: ApiPublicBurstFinalizeRoute,

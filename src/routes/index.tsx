@@ -30,11 +30,11 @@ import {
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Smart Audio Tutor — ESP32 Camera" },
+      { title: "Axon Dynamics — Neurotechnology Research & Innovation" },
       {
         name: "description",
         content:
-          "Capture math, physics or notes with your ESP32-S3-CAM and listen to a step-by-step explanation in your earbuds.",
+          "Axon Dynamics is a research and innovation company advancing neurotechnology — building intelligent systems that bridge brain-computer interfaces, AI vision, and real-time neural decoding for science and assistive applications.",
       },
     ],
   }),

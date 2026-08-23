@@ -77,7 +77,7 @@ const EMOTIONS: Emotion[] = [
     amp: 0.42,
     noise: 0.05,
     arousal: 0.25,
-    keys: ["r", "R", "0", "6"],
+    keys: ["r", "R", "6"],
     ringLabel: "R key",
     bands: { delta: 0.22, theta: 0.3, alpha: 0.82, beta: 0.25, gamma: 0.12 },
   },

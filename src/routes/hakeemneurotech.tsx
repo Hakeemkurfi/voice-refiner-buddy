@@ -587,8 +587,12 @@ function EmotionPanel({
 function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) {
   return (
     <Panel title="Thought-actuated lamp" hint="ESP32 · relay GPIO 26">
-      <div className="flex items-center gap-5">
-        <svg viewBox="0 0 64 96" className={`h-24 w-16 shrink-0 ${bulb ? "neuro-lit" : ""}`} aria-hidden="true">
+      <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
+        <svg
+          viewBox="0 0 64 96"
+          className={`h-44 w-32 shrink-0 sm:h-48 sm:w-36 ${bulb ? "neuro-lit" : ""}`}
+          aria-hidden="true"
+        >
           <defs>
             <radialGradient id="bulbGlow" cx="50%" cy="38%" r="55%">
               <stop offset="0%" stopColor="var(--emo)" stopOpacity={bulb ? 0.95 : 0.06} />
@@ -615,8 +619,8 @@ function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) 
           <rect x="24" y="71" width="16" height="9" rx="3" fill="var(--emo)" opacity="0.35" />
         </svg>
 
-        <div className="min-w-0 flex-1">
-          <p className="text-2xl font-semibold" style={{ color: bulb ? "var(--emo)" : undefined }}>
+        <div className="min-w-0 flex-1 text-center sm:text-left">
+          <p className="text-3xl font-semibold" style={{ color: bulb ? "var(--emo)" : undefined }}>
             {bulb ? "Lamp ON" : "Lamp OFF"}
           </p>
           <p className="mt-1 text-sm opacity-65">
@@ -625,7 +629,7 @@ function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) 
           <button
             type="button"
             onClick={onToggle}
-            className="mt-3 w-full rounded-xl px-4 py-2.5 text-sm font-medium transition-transform active:scale-[0.98]"
+            className="mt-4 w-full rounded-xl px-4 py-3 text-sm font-medium transition-transform active:scale-[0.98]"
             style={{
               background: bulb ? "var(--emo)" : "var(--emo-soft)",
               color: bulb ? "var(--neuro-bg-deep)" : "var(--neuro-fg)",
@@ -639,6 +643,7 @@ function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) 
     </Panel>
   );
 }
+
 
 function EegPanel({
   emotion,

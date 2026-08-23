@@ -29,6 +29,14 @@
      Relay IN  -> GPIO 26        (RELAY_ACTIVE_LOW = 1 for most blue relays)
      Relay VCC -> 5V, GND -> GND
      EEG / analog electrode front-end -> GPIO 34 (ADC1_CH6), optional
+
+   ARDUINO IDE / USB (ESP32-S3 boards with two USB sockets)
+   ----------------------------------------------------------
+     Board: "ESP32S3 Dev Module"   USB CDC On Boot: "Enabled"
+     Use the socket/COM port that successfully uploads for BOTH upload and
+     Serial Monitor. Set Serial Monitor to 115200 baud. The other socket may
+     be the native USB/OTG connector and can disappear unless the sketch
+     exposes a USB device; a stale COM9 must not be selected.
    ========================================================================== */
 
 #include <WiFi.h>
@@ -147,8 +155,18 @@ static bool postJson(const String& json) {
   int code = 0;
   int sp = resp.indexOf(' ');
   if (sp > 0 && resp.startsWith("HTTP/")) code = resp.substring(sp + 1, sp + 4).toInt();
-  Serial.printf("[net] POST -> HTTP %d\n", code);
-  if (code >= 200 && code < 300) { httpsFailures = 0; return true; }
+  int bodyAt = resp.indexOf("\r\n\r\n");
+  String responseBody = bodyAt >= 0 ? resp.substring(bodyAt + 4) : resp;
+  responseBody.trim();
+  if (responseBody.length() > 240) responseBody = responseBody.substring(0, 240) + "...";
+  Serial.printf("[server] POST https://%s%s -> HTTP %d\n", SERVER_HOST, SERVER_PATH, code);
+  if (responseBody.length()) Serial.printf("[server] response: %s\n", responseBody.c_str());
+  if (code >= 200 && code < 300) {
+    httpsFailures = 0;
+    Serial.println("[server] SUCCESS — web dashboard received the update");
+    return true;
+  }
+  Serial.println("[server] FAILED — update was not accepted");
   return false;
 }
 
@@ -493,8 +511,12 @@ static void handleRelay() {
 // ──────────────────────────── SETUP / LOOP ────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  delay(300);
+  unsigned long serialWaitStarted = millis();
+  while (!Serial && millis() - serialWaitStarted < 3500) delay(20);
+  delay(200);
   Serial.println("\n=== AXON DYNAMICS · NeuroSync Edge Node ===");
+  Serial.println("[usb] Serial console READY at 115200 baud");
+  Serial.println("[usb] Use the same COM port that uploaded this sketch; ignore stale COM9 if Windows cannot find it.");
 
   pinMode(RELAY_PIN, OUTPUT);
   applyRelay();
@@ -508,11 +530,25 @@ void setup() {
   unsigned long t0 = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < 12000) { delay(300); Serial.print("."); }
   Serial.println();
-  if (WiFi.status() == WL_CONNECTED)
+  if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("[wifi] connected. Dashboard: http://%s/  (RSSI %d)\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI());
-  else
+    Serial.printf("[wifi] IP=%s gateway=%s DNS=%s\n",
+                  WiFi.localIP().toString().c_str(),
+                  WiFi.gatewayIP().toString().c_str(),
+                  WiFi.dnsIP().toString().c_str());
+    Serial.printf("[server] testing https://%s%s ...\n", SERVER_HOST, SERVER_PATH);
+    String startupState = String("{\"emotion\":\"") + EMOTIONS[emotionIndex] +
+                          "\",\"intensity\":" + String(intensity, 2) +
+                          ",\"bulb\":" + (bulbOn ? "true" : "false") +
+                          ",\"device_id\":\"" DEVICE_ID "\"}";
+    if (!postJson(startupState)) {
+      Serial.println("[server] Direct HTTPS unavailable; ring actions will be queued for the local browser relay.");
+    }
+  } else {
     Serial.println("[wifi] NOT connected — ring + relay still work locally.");
+    Serial.println("[wifi] Check 2.4 GHz SSID/password; ESP32 cannot join a 5 GHz-only network.");
+  }
 
   localServer.on("/", handleRoot);
   localServer.on("/act", handleAct);
@@ -520,7 +556,7 @@ void setup() {
   localServer.begin();
 
   initRingBle();
-  Serial.println("Serial commands: bulb / next / prev / up / down / status");
+  Serial.println("[ready] Serial commands: bulb / next / prev / up / down / status / testserver");
 }
 
 static unsigned long lastIpPrint = 0;
@@ -544,11 +580,23 @@ void loop() {
     else if (c == "prev")   actEmotion(-1);
     else if (c == "up")     actIntensity(+0.1f);
     else if (c == "down")   actIntensity(-0.1f);
+    else if (c == "testserver") {
+      Serial.println("[server] manual connection test started");
+      String testState = String("{\"emotion\":\"") + EMOTIONS[emotionIndex] +
+                         "\",\"intensity\":" + String(intensity, 2) +
+                         ",\"bulb\":" + (bulbOn ? "true" : "false") +
+                         ",\"device_id\":\"" DEVICE_ID "\"}";
+      postJson(testState);
+    }
     else if (c == "status") {
-      Serial.printf("bulb=%s emotion=%s arousal=%.2f wifi=%s relayMode=%s\n",
+      Serial.printf("[status] bulb=%s emotion=%s arousal=%.2f ring=%s wifi=%s relayMode=%s\n",
         bulbOn ? "ON" : "OFF", EMOTIONS[emotionIndex], intensity,
+        ringConnected ? "CONNECTED" : "SEARCHING",
         WiFi.status() == WL_CONNECTED ? "OK" : "DOWN",
         browserRelayFirst ? "BROWSER" : "DIRECT");
+      if (WiFi.status() == WL_CONNECTED)
+        Serial.printf("[status] dashboard=http://%s/ server=https://%s%s RSSI=%d dBm\n",
+                      WiFi.localIP().toString().c_str(), SERVER_HOST, SERVER_PATH, WiFi.RSSI());
     }
   }
 

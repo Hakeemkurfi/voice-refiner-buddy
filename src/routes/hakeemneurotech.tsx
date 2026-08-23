@@ -54,6 +54,20 @@ type Emotion = {
 
 const EMOTIONS: Emotion[] = [
   {
+    id: "neutral",
+    label: "Neutral",
+    glyph: "◌",
+    narrative: "Baseline cortical activity. No affective state decoded yet — awaiting ring input.",
+    band: "Mixed baseline",
+    freq: 0.8,
+    amp: 0.3,
+    noise: 0.04,
+    arousal: 0.18,
+    keys: ["n", "N", "0"],
+    ringLabel: "N key",
+    bands: { delta: 0.3, theta: 0.3, alpha: 0.5, beta: 0.3, gamma: 0.14 },
+  },
+  {
     id: "rest",
     label: "Rest",
     glyph: "◍",

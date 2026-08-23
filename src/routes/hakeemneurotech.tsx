@@ -85,7 +85,7 @@ const EMOTIONS: Emotion[] = [
     id: "laugh",
     label: "Laugh",
     glyph: "◉",
-    narrative: "Rapid burst pattern across motor and limbic channels.",
+    narrative: "Rapid burst pattern across motor and limbic channels. Developed By",
     band: "Beta burst 16–24 Hz",
     freq: 2.6,
     amp: 0.72,
@@ -383,8 +383,7 @@ function Header({ linked }: { linked: "offline" | "live" }) {
             NeuroSync Cortical Console
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed opacity-70">
-            Real-time emotion decoding from EEG headset streams, with thought-driven actuation of a
-            physical relay bulb through an ESP32 edge node.
+            Real-time emotion decoding from EEG headset streams, with thought-physical action driven. Developed by Hakeem Kurfi Katsina Nigeria&nbsp;
           </p>
         </div>
       </div>

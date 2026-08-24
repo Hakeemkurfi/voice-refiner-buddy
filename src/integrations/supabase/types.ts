@@ -109,6 +109,7 @@ export type Database = {
       neuro_state: {
         Row: {
           bulb: boolean
+          client_name: string
           device_id: string | null
           eeg: Json
           emotion: string
@@ -118,6 +119,7 @@ export type Database = {
         }
         Insert: {
           bulb?: boolean
+          client_name?: string
           device_id?: string | null
           eeg?: Json
           emotion?: string
@@ -127,6 +129,7 @@ export type Database = {
         }
         Update: {
           bulb?: boolean
+          client_name?: string
           device_id?: string | null
           eeg?: Json
           emotion?: string

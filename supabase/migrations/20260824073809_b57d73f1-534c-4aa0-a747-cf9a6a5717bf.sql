@@ -1,0 +1,1 @@
+ALTER TABLE public.neuro_state ADD COLUMN IF NOT EXISTS client_name text NOT NULL DEFAULT 'Unnamed Subject';

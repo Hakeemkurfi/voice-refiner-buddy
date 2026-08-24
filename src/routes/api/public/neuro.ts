@@ -28,7 +28,7 @@ export const Route = createFileRoute("/api/public/neuro")({
           const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
           const { data, error } = await supabaseAdmin
             .from("neuro_state")
-            .select("id, device_id, emotion, intensity, bulb, eeg, updated_at")
+            .select("id, device_id, client_name, emotion, intensity, bulb, eeg, updated_at")
             .eq("id", ROW_ID)
             .maybeSingle();
           if (error) {
@@ -63,6 +63,7 @@ export const Route = createFileRoute("/api/public/neuro")({
             cycle_emotion?: boolean;
             eeg?: number[];
             device_id?: string;
+            client_name?: string;
           };
 
           let body: Body = {};
@@ -72,6 +73,8 @@ export const Route = createFileRoute("/api/public/neuro")({
           // Query-string form so the ESP32 can fire simple GET-style POSTs.
           const qEmotion = url.searchParams.get("emotion");
           const qBulb = url.searchParams.get("bulb");
+          const qClient = url.searchParams.get("client_name");
+          if (qClient) body.client_name = qClient;
           if (qEmotion) body.emotion = qEmotion;
           if (url.searchParams.get("toggle_bulb") === "1") body.toggle_bulb = true;
           if (url.searchParams.get("cycle_emotion") === "1") body.cycle_emotion = true;
@@ -79,13 +82,17 @@ export const Route = createFileRoute("/api/public/neuro")({
 
           const { data: current } = await supabaseAdmin
             .from("neuro_state")
-            .select("emotion, bulb, intensity, eeg")
+            .select("emotion, bulb, intensity, eeg, client_name")
             .eq("id", ROW_ID)
             .maybeSingle();
 
           let emotion = current?.emotion ?? "neutral";
           let bulb = current?.bulb ?? false;
           let intensity = current?.intensity ?? 0.5;
+          let clientName = current?.client_name ?? "Unnamed Subject";
+          if (typeof body.client_name === "string" && body.client_name.trim()) {
+            clientName = body.client_name.trim().slice(0, 60);
+          }
 
           if (body.cycle_emotion) {
             const i = EMOTIONS.indexOf(emotion as (typeof EMOTIONS)[number]);
@@ -110,6 +117,7 @@ export const Route = createFileRoute("/api/public/neuro")({
               {
                 id: ROW_ID,
                 device_id: body.device_id ?? request.headers.get("x-device-id") ?? "esp32-neuro-01",
+                client_name: clientName,
                 emotion,
                 intensity,
                 bulb,
@@ -118,7 +126,7 @@ export const Route = createFileRoute("/api/public/neuro")({
               },
               { onConflict: "id" },
             )
-            .select("id, device_id, emotion, intensity, bulb, eeg, updated_at")
+            .select("id, device_id, client_name, emotion, intensity, bulb, eeg, updated_at")
             .single();
 
           if (error) {

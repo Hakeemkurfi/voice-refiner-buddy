@@ -197,13 +197,15 @@ function NeuroConsole() {
     [],
   );
 
+  const [clientName, setClientName] = useState("Unnamed Subject");
   const bulbRef = useRef(false);
   const localEditAt = useRef(0);
   const applyState = useCallback(
-    (s: { emotion?: string; bulb?: boolean; intensity?: number; eeg?: number[] } | null) => {
+    (s: { emotion?: string; bulb?: boolean; intensity?: number; eeg?: number[]; client_name?: string } | null) => {
+      if (s && typeof s.client_name === "string" && s.client_name) setClientName(s.client_name);
       if (!s) return;
       // Don't let a stale poll response undo an action the user just made.
-      if (Date.now() - localEditAt.current < 2500) return;
+      if (Date.now() - localEditAt.current < 1200) return;
       if (s.emotion) setEmotionId(s.emotion as EmotionId);
       if (typeof s.bulb === "boolean") { bulbRef.current = s.bulb; setBulb(s.bulb); }
       if (typeof s.intensity === "number") setIntensity(s.intensity);
@@ -229,7 +231,7 @@ function NeuroConsole() {
       }
     };
     tick();
-    const t = setInterval(tick, 1500);
+    const t = setInterval(tick, 600);
     return () => {
       alive = false;
       clearInterval(t);
@@ -307,7 +309,7 @@ function NeuroConsole() {
   return (
     <main className={`${themeClass} min-h-screen w-full transition-colors duration-700`}>
       <div className="mx-auto w-full max-w-7xl px-5 py-8 md:px-8 md:py-12">
-        <Header linked={linked} />
+        <Header linked={linked} clientName={clientName} />
 
         <section className="mt-8 grid gap-5 lg:grid-cols-12">
           <div className="min-w-0 lg:col-span-7">
@@ -378,7 +380,7 @@ function Panel({
   );
 }
 
-function Header({ linked }: { linked: "offline" | "live" }) {
+function Header({ linked, clientName }: { linked: "offline" | "live"; clientName: string }) {
   return (
     <header className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
       <div className="flex items-start gap-4">
@@ -406,6 +408,8 @@ function Header({ linked }: { linked: "offline" | "live" }) {
       </div>
 
       <div className="neuro-panel rounded-2xl px-5 py-4 text-sm md:min-w-[19rem]">
+        <p className="text-[0.68rem] uppercase tracking-[0.22em] opacity-55">Client Name</p>
+        <p className="mt-1 mb-3 text-lg font-semibold leading-snug" style={{ color: "var(--emo)" }}>{clientName}</p>
         <p className="text-[0.68rem] uppercase tracking-[0.22em] opacity-55">Research Affiliation</p>
         <p className="mt-2 font-medium leading-snug">Harbin Engineering University</p>
         <p className="text-sm opacity-70">Department of Science and Intelligent Systems</p>

@@ -67,7 +67,7 @@
 #define ENABLE_BLE_RING  1
 #define RING_NAME_HINT   ""       // "" accepts any BLE HID ring
 #define EEG_POST_MS      3000     // leave network time for web-to-ESP command polling
-#define COMMAND_POLL_MS  400      // web -> ESP32 latency (relay/lamp) stays sub-second     // web lamp/emotion updates reach the ESP32 quickly
+#define COMMAND_POLL_MS  400      // web -> ESP32 latency (relay/lamp) stays sub-second
 #define MIDDLE_LONGPRESS_MS 800
 
 // ───────────────────────────── STATE ──────────────────────────────────────

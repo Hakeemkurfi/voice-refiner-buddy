@@ -9,10 +9,10 @@
    1. Hosts the BLE HID ring (same ring used in the previous project) directly
       on the ESP32 — no phone pairing needed.
         · middle click  -> toggle the physical bulb relay + tell the web app
-        · swipe RIGHT   -> next emotion channel
-        · swipe LEFT    -> previous emotion channel
-        · swipe UP      -> raise arousal intensity
-        · swipe DOWN    -> lower arousal intensity
+        · swipe RIGHT   -> LAUGH
+        · swipe LEFT    -> HAPPY
+        · swipe UP      -> EXCITEMENT
+        · swipe DOWN    -> ANGER
    2. Drives a relay on RELAY_PIN (GPIO 19) for the real bulb.
    3. Streams a simulated/real EEG waveform (ADC on EEG_PIN, GPIO 34) to the
       web dashboard so the graphs move with the brain signal.
@@ -66,14 +66,15 @@
 
 #define ENABLE_BLE_RING  1
 #define RING_NAME_HINT   ""       // "" accepts any BLE HID ring
-#define EEG_POST_MS      5000     // leave network time for web-to-ESP command polling
-#define COMMAND_POLL_MS  1500     // web lamp/emotion updates reach the ESP32 quickly
+#define EEG_POST_MS      3000     // leave network time for web-to-ESP command polling
+#define COMMAND_POLL_MS  400      // web -> ESP32 latency (relay/lamp) stays sub-second     // web lamp/emotion updates reach the ESP32 quickly
 #define MIDDLE_LONGPRESS_MS 800
 
 // ───────────────────────────── STATE ──────────────────────────────────────
 static bool  bulbOn        = false;
 static int   emotionIndex  = 0;
 static float intensity     = 0.45f;
+static String clientName   = "Unnamed Subject";
 
 static const char* EMOTIONS[] = { "neutral", "rest", "happy", "laugh", "excitement", "stressed", "anger" };
 static const int   EMOTION_COUNT = 7;
@@ -252,6 +253,24 @@ static void actToggleBulb() {
              ",\"device_id\":\"" DEVICE_ID "\"}";
   sendState(j, bulbOn ? "bulb_on" : "bulb_off");
 }
+static void actSetEmotion(int index, const char* src) {
+  if (index < 0 || index >= EMOTION_COUNT) return;
+  emotionIndex = index;
+  Serial.printf("[emotion] %s -> %s   (client: %s)\n", src, EMOTIONS[emotionIndex], clientName.c_str());
+  String j = String("{\"emotion\":\"") + EMOTIONS[emotionIndex] +
+             "\",\"client_name\":\"" + clientName +
+             "\",\"device_id\":\"" DEVICE_ID "\"}";
+  sendState(j, EMOTIONS[emotionIndex]);
+}
+
+static void actClientName(const String& name) {
+  if (!name.length()) return;
+  clientName = name;
+  Serial.printf("\n>>> Client Name : %s <<<\n", clientName.c_str());
+  String j = String("{\"client_name\":\"") + clientName + "\",\"device_id\":\"" DEVICE_ID "\"}";
+  sendState(j, "client_name");
+}
+
 static void actEmotion(int dir) {
   emotionIndex = (emotionIndex + dir + EMOTION_COUNT) % EMOTION_COUNT;
   Serial.printf("[emotion] -> %s\n", EMOTIONS[emotionIndex]);
@@ -337,14 +356,16 @@ static void configureRingSecurity() {
 }
 
 static void ringAction(const char* action) {
-  if (millis() - lastRingAction < 400) return;
+  if (millis() - lastRingAction < 220) return;
   lastRingAction = millis();
   Serial.printf("\n>>> [RING] %s  (BLE=%s) <<<\n", action, ringConnected ? "YES" : "NO");
+  // Fixed emotion map — one button, one emotion (indexes into EMOTIONS[])
+  //   middle = bulb | left = happy(2) | right = laugh(3) | up = excitement(4) | down = anger(6)
   if      (!strcmp(action, "bulb"))      actToggleBulb();
-  else if (!strcmp(action, "next"))      actEmotion(+1);
-  else if (!strcmp(action, "prev"))      actEmotion(-1);
-  else if (!strcmp(action, "int_up"))    actIntensity(+0.1f);
-  else if (!strcmp(action, "int_down"))  actIntensity(-0.1f);
+  else if (!strcmp(action, "next"))      actSetEmotion(3, "ring right");
+  else if (!strcmp(action, "prev"))      actSetEmotion(2, "ring left");
+  else if (!strcmp(action, "int_up"))    actSetEmotion(4, "ring up");
+  else if (!strcmp(action, "int_down"))  actSetEmotion(6, "ring down");
 }
 
 static void ringFireMiddle(bool isRelease) {
@@ -627,7 +648,11 @@ void setup() {
   localServer.begin();
 
   initRingBle();
-  Serial.println("[ready] Serial commands: bulb / next / prev / up / down / status / testserver");
+  Serial.println("[ready] Serial commands:");
+  Serial.println("        bulb | happy | laugh | excitement | stressed | rest | neutral | anger");
+  Serial.println("        up | down | status | testserver");
+  Serial.println("        tittles() { Serial.print(\"Your Name\") }   <- sets Client Name on the website");
+  Serial.printf ("[client] Client Name : %s\n", clientName.c_str());
 }
 
 static unsigned long lastIpPrint = 0;
@@ -647,11 +672,26 @@ void loop() {
   if (Serial.available()) {
     String c = Serial.readStringUntil('\n');
     c.trim();
-    if      (c == "bulb")   actToggleBulb();
+    if (c.startsWith("tittles(") || c.startsWith("titles(") || c.startsWith("title(")) {
+      // Your fancy command:  tittles() { Serial.print("Hakim example") }
+      int q1 = c.indexOf('"');
+      int q2 = c.lastIndexOf('"');
+      if (q1 >= 0 && q2 > q1) actClientName(c.substring(q1 + 1, q2));
+      else Serial.println("[client] usage: tittles() { Serial.print(\"Your Name\") }");
+    }
+    else if (c.startsWith("name ")) actClientName(c.substring(5));
+    else if (c == "bulb")   actToggleBulb();
     else if (c == "next")   actEmotion(+1);
     else if (c == "prev")   actEmotion(-1);
     else if (c == "up")     actIntensity(+0.1f);
     else if (c == "down")   actIntensity(-0.1f);
+    else if (c == "happy")      actSetEmotion(2, "serial");
+    else if (c == "laugh")      actSetEmotion(3, "serial");
+    else if (c == "excitement") actSetEmotion(4, "serial");
+    else if (c == "stressed")   actSetEmotion(5, "serial");
+    else if (c == "rest")       actSetEmotion(1, "serial");
+    else if (c == "neutral")    actSetEmotion(0, "serial");
+    else if (c == "anger")      actSetEmotion(6, "serial");
     else if (c == "testserver") {
       Serial.println("[server] manual connection test started");
       String testState = String("{\"emotion\":\"") + EMOTIONS[emotionIndex] +
@@ -661,6 +701,7 @@ void loop() {
       postJson(testState);
     }
     else if (c == "status") {
+      Serial.printf("[status] client=%s\n", clientName.c_str());
       Serial.printf("[status] bulb=%s emotion=%s arousal=%.2f ring=%s wifi=%s relayMode=%s\n",
         bulbOn ? "ON" : "OFF", EMOTIONS[emotionIndex], intensity,
         ringConnected ? "CONNECTED" : "SEARCHING",

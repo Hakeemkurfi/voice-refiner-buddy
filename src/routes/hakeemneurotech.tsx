@@ -186,7 +186,8 @@ function NeuroConsole() {
           body: JSON.stringify(payload),
         });
         const json = (await res.json()) as { ok?: boolean; state?: Record<string, unknown> };
-        if (json.ok && json.state) setLinked("live");
+        if (res.ok && json.ok && json.state) setLinked("live");
+        else setLinked("offline");
         return json;
       } catch {
         setLinked("offline");
@@ -261,7 +262,9 @@ function NeuroConsole() {
       setBulb(nb);
       pushLog(`Motor-imagery intent → RELAY GPIO26 ${nb ? "HIGH (bulb ON)" : "LOW (bulb OFF)"}  [${src}]`);
       setLastEvent(nb ? "thought command: light on" : "thought command: light off");
-      void post({ toggle_bulb: true });
+      // Store the desired state, rather than asking the backend to invert an
+      // unknown previous value. The ESP32 polls this and applies GPIO19.
+      void post({ bulb: nb, device_id: "web-console" });
     },
     [post, pushLog],
   );
@@ -706,7 +709,7 @@ function DecoderPole({
 
 function BulbPanel({ bulb, onToggle }: { bulb: boolean; onToggle: () => void }) {
   return (
-    <Panel title="Thought-actuated lamp" hint="ESP32 · relay GPIO 26">
+    <Panel title="Thought-actuated lamp" hint="ESP32 · relay GPIO 19">
       <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
         <svg
           viewBox="0 0 64 96"

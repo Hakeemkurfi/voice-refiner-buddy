@@ -13,7 +13,7 @@
         · swipe LEFT    -> previous emotion channel
         · swipe UP      -> raise arousal intensity
         · swipe DOWN    -> lower arousal intensity
-   2. Drives a relay on RELAY_PIN (GPIO 26) for the real bulb.
+   2. Drives a relay on RELAY_PIN (GPIO 19) for the real bulb.
    3. Streams a simulated/real EEG waveform (ADC on EEG_PIN, GPIO 34) to the
       web dashboard so the graphs move with the brain signal.
    4. Talks to the web console at:
@@ -26,7 +26,7 @@
 
    WIRING
    ------
-     Relay IN  -> GPIO 26        (RELAY_ACTIVE_LOW = 1 for most blue relays)
+     Relay IN  -> GPIO 19        (RELAY_ACTIVE_LOW = 1 for most blue relays)
      Relay VCC -> 5V, GND -> GND
      EEG / analog electrode front-end -> GPIO 34 (ADC1_CH6), optional
 
@@ -54,19 +54,20 @@
 #define WIFI_SSID       "YOUR_WIFI_SSID"
 #define WIFI_PASS       "YOUR_WIFI_PASSWORD"
 
-// Your published Lovable app host (no https://, no trailing slash)
-#define SERVER_HOST     "voice-refiner-buddy.lovable.app"
+// Your published Axon Dynamics app host (no https://, no trailing slash)
+#define SERVER_HOST     "axondynamics.lovable.app"
 #define SERVER_PATH     "/api/public/neuro"
 #define DEVICE_ID       "esp32-neuro-01"
 
-#define RELAY_PIN        26
+#define RELAY_PIN        19       // matches the relay pin shown in your serial log
 #define RELAY_ACTIVE_LOW 1        // 1 = relay closes when pin is LOW
 #define EEG_PIN          34       // ADC input; leave floating to use simulation
 #define USE_REAL_ADC     0        // 1 = read GPIO34, 0 = synthesise the wave
 
 #define ENABLE_BLE_RING  1
 #define RING_NAME_HINT   ""       // "" accepts any BLE HID ring
-#define EEG_POST_MS      2000     // how often to push the waveform packet
+#define EEG_POST_MS      5000     // leave network time for web-to-ESP command polling
+#define COMMAND_POLL_MS  1500     // web lamp/emotion updates reach the ESP32 quickly
 #define MIDDLE_LONGPRESS_MS 800
 
 // ───────────────────────────── STATE ──────────────────────────────────────
@@ -170,6 +171,74 @@ static bool postJson(const String& json) {
   return false;
 }
 
+static bool extractJsonBool(const String& body, const char* key, bool& value) {
+  String marker = String("\"") + key + "\":";
+  int at = body.indexOf(marker);
+  if (at < 0) return false;
+  at += marker.length();
+  while (at < (int)body.length() && body[at] == ' ') at++;
+  if (body.startsWith("true", at)) { value = true; return true; }
+  if (body.startsWith("false", at)) { value = false; return true; }
+  return false;
+}
+
+static bool extractJsonString(const String& body, const char* key, String& value) {
+  String marker = String("\"") + key + "\":\"";
+  int at = body.indexOf(marker);
+  if (at < 0) return false;
+  at += marker.length();
+  int end = body.indexOf('"', at);
+  if (end < 0) return false;
+  value = body.substring(at, end);
+  return true;
+}
+
+// Pull commands created by the public web console. This is what lets the
+// website's lamp switch drive the same real relay as the ring middle button.
+static unsigned long lastCommandPoll = 0;
+static void pollRemoteState() {
+  if (browserRelayFirst || WiFi.status() != WL_CONNECTED) return;
+  if (millis() - lastCommandPoll < COMMAND_POLL_MS) return;
+  lastCommandPoll = millis();
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(5000);
+  client.setHandshakeTimeout(8);
+  if (!client.connect(SERVER_HOST, 443)) return;
+  client.printf("GET %s HTTP/1.1\r\n", SERVER_PATH);
+  client.printf("Host: %s\r\n", SERVER_HOST);
+  client.print("Accept: application/json\r\nConnection: close\r\n\r\n");
+
+  unsigned long started = millis();
+  String response;
+  while (client.connected() && millis() - started < 5000) {
+    while (client.available()) response += (char)client.read();
+    delay(1);
+  }
+  client.stop();
+  int bodyAt = response.indexOf("\r\n\r\n");
+  if (bodyAt < 0 || !response.startsWith("HTTP/1.1 200") && !response.startsWith("HTTP/2 200")) return;
+  String body = response.substring(bodyAt + 4);
+
+  bool remoteBulb = bulbOn;
+  if (extractJsonBool(body, "bulb", remoteBulb) && remoteBulb != bulbOn) {
+    bulbOn = remoteBulb;
+    Serial.printf("[server->esp] web lamp command: %s\n", bulbOn ? "ON" : "OFF");
+    applyRelay();
+  }
+  String remoteEmotion;
+  if (extractJsonString(body, "emotion", remoteEmotion)) {
+    for (int i = 0; i < EMOTION_COUNT; i++) {
+      if (remoteEmotion == EMOTIONS[i] && emotionIndex != i) {
+        emotionIndex = i;
+        Serial.printf("[server->esp] web emotion: %s\n", EMOTIONS[emotionIndex]);
+        break;
+      }
+    }
+  }
+}
+
 static void sendState(const String& json, const char* relayAction) {
   if (browserRelayFirst) { queueBrowserRelay(relayAction); return; }
   if (!postJson(json))   queueBrowserRelay(relayAction);
@@ -179,13 +248,15 @@ static void sendState(const String& json, const char* relayAction) {
 static void actToggleBulb() {
   bulbOn = !bulbOn;
   applyRelay();
-  sendState("{\"toggle_bulb\":true,\"device_id\":\"" DEVICE_ID "\"}", "toggle_bulb");
+  String j = String("{\"bulb\":") + (bulbOn ? "true" : "false") +
+             ",\"device_id\":\"" DEVICE_ID "\"}";
+  sendState(j, bulbOn ? "bulb_on" : "bulb_off");
 }
 static void actEmotion(int dir) {
   emotionIndex = (emotionIndex + dir + EMOTION_COUNT) % EMOTION_COUNT;
   Serial.printf("[emotion] -> %s\n", EMOTIONS[emotionIndex]);
   String j = String("{\"emotion\":\"") + EMOTIONS[emotionIndex] + "\",\"device_id\":\"" DEVICE_ID "\"}";
-  sendState(j, dir > 0 ? "emotion_next" : "emotion_prev");
+  sendState(j, EMOTIONS[emotionIndex]);
 }
 static void actIntensity(float delta) {
   intensity += delta;
@@ -484,10 +555,10 @@ static void handleRoot() {
   p += "<button onclick=\"go('next')\" style='padding:12px 20px;font-size:16px'>Next emotion</button></p>";
   p += "<p id='s' style='opacity:.7'>relay idle</p>";
   p += "<script>const H='https://" SERVER_HOST "';const P='" SERVER_PATH "';";
-  p += "async function send(a){let b={};if(a=='bulb')b={toggle_bulb:true};else if(a=='next')b={cycle_emotion:true};";
-  p += "else if(a=='emotion_next')b={cycle_emotion:true};else if(a=='toggle_bulb')b={toggle_bulb:true};else return;";
+  p += "async function send(a){let b={};if(a=='bulb'||a=='toggle_bulb'||a=='bulb_on'||a=='bulb_off')b={bulb:a=='bulb_on'?true:a=='bulb_off'?false:undefined,toggle_bulb:a=='bulb'||a=='toggle_bulb'};";
+  p += "else if(['neutral','rest','happy','laugh','excitement','stressed','anger'].includes(a))b={emotion:a};else if(a=='next'||a=='emotion_next')b={cycle_emotion:true};else if(a=='prev'||a=='emotion_prev')return;else if(a=='intensity_up'||a=='intensity_down')return;else return;";
   p += "await fetch(H+P,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});}";
-  p += "async function go(a){document.getElementById('s').textContent='relaying '+a+'...';await fetch('/act?a='+a);await send(a);document.getElementById('s').textContent='sent '+a;}";
+  p += "async function go(a){document.getElementById('s').textContent='sending '+a+'...';await fetch('/act?a='+a);document.getElementById('s').textContent='sent '+a;}";
   p += "setInterval(async()=>{try{let r=await fetch('/relay',{cache:'no-store'});let j=await r.json();";
   p += "if(j.action){document.getElementById('s').textContent='ring -> '+j.action;await send(j.action);}}catch(e){}},900);";
   p += "</script></body>";
@@ -564,6 +635,7 @@ static unsigned long lastIpPrint = 0;
 void loop() {
   localServer.handleClient();
   maintainRingBle();
+  pollRemoteState();
   postEeg();
 
 #if ENABLE_BLE_RING

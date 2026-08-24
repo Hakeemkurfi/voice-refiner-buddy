@@ -13,7 +13,7 @@
         · swipe LEFT    -> previous emotion channel
         · swipe UP      -> raise arousal intensity
         · swipe DOWN    -> lower arousal intensity
-   2. Drives a relay on RELAY_PIN (GPIO 26) for the real bulb.
+   2. Drives a relay on RELAY_PIN (GPIO 19) for the real bulb.
    3. Streams a simulated/real EEG waveform (ADC on EEG_PIN, GPIO 34) to the
       web dashboard so the graphs move with the brain signal.
    4. Talks to the web console at:
@@ -26,7 +26,7 @@
 
    WIRING
    ------
-     Relay IN  -> GPIO 26        (RELAY_ACTIVE_LOW = 1 for most blue relays)
+     Relay IN  -> GPIO 19        (RELAY_ACTIVE_LOW = 1 for most blue relays)
      Relay VCC -> 5V, GND -> GND
      EEG / analog electrode front-end -> GPIO 34 (ADC1_CH6), optional
 
@@ -256,7 +256,7 @@ static void actEmotion(int dir) {
   emotionIndex = (emotionIndex + dir + EMOTION_COUNT) % EMOTION_COUNT;
   Serial.printf("[emotion] -> %s\n", EMOTIONS[emotionIndex]);
   String j = String("{\"emotion\":\"") + EMOTIONS[emotionIndex] + "\",\"device_id\":\"" DEVICE_ID "\"}";
-  sendState(j, dir > 0 ? "emotion_next" : "emotion_prev");
+  sendState(j, EMOTIONS[emotionIndex]);
 }
 static void actIntensity(float delta) {
   intensity += delta;
@@ -556,9 +556,9 @@ static void handleRoot() {
   p += "<p id='s' style='opacity:.7'>relay idle</p>";
   p += "<script>const H='https://" SERVER_HOST "';const P='" SERVER_PATH "';";
   p += "async function send(a){let b={};if(a=='bulb'||a=='toggle_bulb'||a=='bulb_on'||a=='bulb_off')b={bulb:a=='bulb_on'?true:a=='bulb_off'?false:undefined,toggle_bulb:a=='bulb'||a=='toggle_bulb'};";
-  p += "else if(a=='next'||a=='emotion_next')b={cycle_emotion:true};else if(a=='prev'||a=='emotion_prev')b={cycle_emotion:true};else if(a=='intensity_up'||a=='intensity_down')return;else return;";
+  p += "else if(['neutral','rest','happy','laugh','excitement','stressed','anger'].includes(a))b={emotion:a};else if(a=='next'||a=='emotion_next')b={cycle_emotion:true};else if(a=='prev'||a=='emotion_prev')return;else if(a=='intensity_up'||a=='intensity_down')return;else return;";
   p += "await fetch(H+P,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});}";
-  p += "async function go(a){document.getElementById('s').textContent='relaying '+a+'...';await fetch('/act?a='+a);await send(a);document.getElementById('s').textContent='sent '+a;}";
+  p += "async function go(a){document.getElementById('s').textContent='sending '+a+'...';await fetch('/act?a='+a);document.getElementById('s').textContent='sent '+a;}";
   p += "setInterval(async()=>{try{let r=await fetch('/relay',{cache:'no-store'});let j=await r.json();";
   p += "if(j.action){document.getElementById('s').textContent='ring -> '+j.action;await send(j.action);}}catch(e){}},900);";
   p += "</script></body>";

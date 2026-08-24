@@ -260,7 +260,7 @@ function NeuroConsole() {
       const nb = !bulbRef.current;
       bulbRef.current = nb;
       setBulb(nb);
-      pushLog(`Motor-imagery intent → RELAY GPIO26 ${nb ? "HIGH (bulb ON)" : "LOW (bulb OFF)"}  [${src}]`);
+      pushLog(`Motor-imagery intent → RELAY GPIO19 ${nb ? "ON" : "OFF"}  [${src}]`);
       setLastEvent(nb ? "thought command: light on" : "thought command: light off");
       // Store the desired state, rather than asking the backend to invert an
       // unknown previous value. The ESP32 polls this and applies GPIO19.

@@ -66,8 +66,8 @@
 
 #define ENABLE_BLE_RING  1
 #define RING_NAME_HINT   ""       // "" accepts any BLE HID ring
-#define EEG_POST_MS      3000     // leave network time for web-to-ESP command polling
-#define COMMAND_POLL_MS  400      // web -> ESP32 latency (relay/lamp) stays sub-second
+#define EEG_POST_MS      8000     // EEG is secondary; avoid blocking BLE button reports
+#define COMMAND_POLL_MS  750      // quick web -> ESP sync without flooding TLS handshakes
 #define MIDDLE_LONGPRESS_MS 800
 
 // ───────────────────────────── STATE ──────────────────────────────────────
@@ -336,6 +336,21 @@ static unsigned long ringConnectBackoff = 2500;
 static bool ringMiddleHeld = false;
 static unsigned long ringMiddleHeldAt = 0;
 volatile unsigned long lastMiddlePatternAt = 0;
+static int32_t ringGestureX = 0;
+static int32_t ringGestureY = 0;
+static uint16_t ringGestureSamples = 0;
+static unsigned long ringGestureLastAt = 0;
+static const uint16_t RING_GESTURE_QUIET_MS = 95;
+
+enum RingCommand : uint8_t {
+  RING_NONE,
+  RING_BULB,
+  RING_HAPPY,
+  RING_LAUGH,
+  RING_EXCITEMENT,
+  RING_ANGER,
+};
+static volatile RingCommand pendingRingCommand = RING_NONE;
 
 class RingClientCallbacks : public BLEClientCallbacks {
   void onConnect(BLEClient*) override    { Serial.println("[ring] BLE link opened"); }
@@ -359,13 +374,52 @@ static void ringAction(const char* action) {
   if (millis() - lastRingAction < 220) return;
   lastRingAction = millis();
   Serial.printf("\n>>> [RING] %s  (BLE=%s) <<<\n", action, ringConnected ? "YES" : "NO");
-  // Fixed emotion map — one button, one emotion (indexes into EMOTIONS[])
-  //   middle = bulb | left = happy(2) | right = laugh(3) | up = excitement(4) | down = anger(6)
-  if      (!strcmp(action, "bulb"))      actToggleBulb();
-  else if (!strcmp(action, "next"))      actSetEmotion(3, "ring right");
-  else if (!strcmp(action, "prev"))      actSetEmotion(2, "ring left");
-  else if (!strcmp(action, "int_up"))    actSetEmotion(4, "ring up");
-  else if (!strcmp(action, "int_down"))  actSetEmotion(6, "ring down");
+  // Queue only: HTTPS must never run inside the BLE notification callback,
+  // otherwise reports arriving during a TLS handshake are lost.
+  if      (!strcmp(action, "bulb"))      pendingRingCommand = RING_BULB;
+  else if (!strcmp(action, "next"))      pendingRingCommand = RING_LAUGH;
+  else if (!strcmp(action, "prev"))      pendingRingCommand = RING_HAPPY;
+  else if (!strcmp(action, "int_up"))    pendingRingCommand = RING_EXCITEMENT;
+  else if (!strcmp(action, "int_down"))  pendingRingCommand = RING_ANGER;
+}
+
+static void finishRingGesture() {
+  if (!ringGestureSamples || millis() - ringGestureLastAt < RING_GESTURE_QUIET_MS) return;
+
+  int32_t x = ringGestureX;
+  int32_t y = ringGestureY;
+  uint16_t samples = ringGestureSamples;
+  ringGestureX = 0;
+  ringGestureY = 0;
+  ringGestureSamples = 0;
+
+  int32_t ax = abs(x);
+  int32_t ay = abs(y);
+  Serial.printf("[ring] gesture complete: x=%ld y=%ld samples=%u\n", (long)x, (long)y, samples);
+
+  // The saved calibration shows curved multi-packet traces, so classify the
+  // NET dominant axis after the complete burst rather than reacting to any
+  // individual noisy packet. A side gesture can therefore never toggle bulb.
+  if (ax < 70 && ay < 70) {
+    Serial.println("[ring] gesture ignored: below movement threshold");
+    return;
+  }
+  if (ax >= ay) ringAction(x > 0 ? "next" : "prev");
+  else          ringAction(y < 0 ? "int_up" : "int_down");
+}
+
+static void processPendingRingCommand() {
+  RingCommand command = pendingRingCommand;
+  if (command == RING_NONE) return;
+  pendingRingCommand = RING_NONE;
+  switch (command) {
+    case RING_BULB:       actToggleBulb(); break;
+    case RING_HAPPY:      actSetEmotion(2, "ring left"); break;
+    case RING_LAUGH:      actSetEmotion(3, "ring right"); break;
+    case RING_EXCITEMENT: actSetEmotion(4, "ring up"); break;
+    case RING_ANGER:      actSetEmotion(6, "ring down"); break;
+    default: break;
+  }
 }
 
 static void ringFireMiddle(bool isRelease) {
@@ -387,10 +441,9 @@ static void handleRingReport(uint8_t* d, size_t len) {
   if (len == 0) return;
 
   bool isMouseMode = (len == 4 && d[3] == 0x1F);
-  uint8_t mouseBtn = isMouseMode ? (d[0] & 0x07) : 0;
 
   bool anyPressed = false;
-  if (isMouseMode) anyPressed = (mouseBtn != 0);
+  if (isMouseMode) anyPressed = d[1] != 0 || d[2] != 0;
   else for (size_t i = 0; i < len; i++) if (d[i]) anyPressed = true;
 
   if (!anyPressed) { ringFireMiddle(true); return; }
@@ -404,25 +457,20 @@ static void handleRingReport(uint8_t* d, size_t len) {
   if (len >= 3 && d[1] == 0xF4) return;   // gyro / air-mouse drift
 
   if (isMouseMode) {
-    static bool mmPrevBtn = false;
     int8_t dx = (int8_t)d[1], dy = (int8_t)d[2];
-    bool moving = abs((int)dx) > 12 || abs((int)dy) > 12;
-    bool btnNow = (mouseBtn != 0 && !moving);
-    if (btnNow && !mmPrevBtn)      ringFireMiddle(false);
-    else if (!btnNow && mmPrevBtn) ringFireMiddle(true);
-    mmPrevBtn = btnNow;
-
-    static int32_t accX = 0, accY = 0;
-    static uint32_t lastMoveAt = 0, lastDirAt = 0;
-    const int32_t THRESH = 60;
-    if (millis() - lastMoveAt > 250) { accX = 0; accY = 0; }
-    if (dx || dy) lastMoveAt = millis();
-    accX += dx; accY += dy;
-    if (millis() - lastDirAt > 180) {
-      if (accX >  THRESH) { ringAction("next");     accX = accY = 0; lastDirAt = millis(); return; }
-      if (accX < -THRESH) { ringAction("prev");     accX = accY = 0; lastDirAt = millis(); return; }
-      if (accY < -THRESH) { ringAction("int_up");   accX = accY = 0; lastDirAt = millis(); return; }
-      if (accY >  THRESH) { ringAction("int_down"); accX = accY = 0; lastDirAt = millis(); return; }
+    // IMPORTANT: d[0] is not a reliable click mask for this ring. During a
+    // side gesture it cycles 00 -> 02 -> 07, which previously caused false
+    // lamp toggles. Only F4 01 19 above is accepted as the middle button.
+    if (dx || dy) {
+      if (ringGestureSamples && millis() - ringGestureLastAt > 180) {
+        ringGestureX = 0;
+        ringGestureY = 0;
+        ringGestureSamples = 0;
+      }
+      ringGestureX += dx;
+      ringGestureY += dy;
+      ringGestureSamples++;
+      ringGestureLastAt = millis();
     }
     return;
   }
@@ -630,10 +678,9 @@ void setup() {
                   WiFi.gatewayIP().toString().c_str(),
                   WiFi.dnsIP().toString().c_str());
     Serial.printf("[server] testing https://%s%s ...\n", SERVER_HOST, SERVER_PATH);
-    String startupState = String("{\"emotion\":\"") + EMOTIONS[emotionIndex] +
-                          "\",\"intensity\":" + String(intensity, 2) +
-                          ",\"bulb\":" + (bulbOn ? "true" : "false") +
-                          ",\"device_id\":\"" DEVICE_ID "\"}";
+    // Announce the device without overwriting the last selected emotion or
+    // lamp state. The next GET poll restores both persistent values.
+    String startupState = String("{\"device_id\":\"") + DEVICE_ID + "\"}";
     if (!postJson(startupState)) {
       Serial.println("[server] Direct HTTPS unavailable; ring actions will be queued for the local browser relay.");
     }
@@ -660,6 +707,8 @@ static unsigned long lastIpPrint = 0;
 void loop() {
   localServer.handleClient();
   maintainRingBle();
+  finishRingGesture();
+  processPendingRingCommand();
   pollRemoteState();
   postEeg();
 

@@ -90,44 +90,82 @@ export const Route = createFileRoute("/api/public/neuro")({
           let bulb = current?.bulb ?? false;
           let intensity = current?.intensity ?? 0.5;
           let clientName = current?.client_name ?? "Unnamed Subject";
+          const updates: {
+            device_id?: string;
+            client_name?: string;
+            emotion?: string;
+            intensity?: number;
+            bulb?: boolean;
+            eeg?: number[];
+            updated_at: string;
+          } = { updated_at: new Date().toISOString() };
+          const requestDeviceId = body.device_id ?? request.headers.get("x-device-id");
+          if (requestDeviceId) updates.device_id = requestDeviceId;
           if (typeof body.client_name === "string" && body.client_name.trim()) {
             clientName = body.client_name.trim().slice(0, 60);
+            updates.client_name = clientName;
           }
 
           if (body.cycle_emotion) {
             const i = EMOTIONS.indexOf(emotion as (typeof EMOTIONS)[number]);
             emotion = EMOTIONS[(i + 1) % EMOTIONS.length];
+            updates.emotion = emotion;
           }
           if (body.emotion && EMOTIONS.includes(body.emotion as (typeof EMOTIONS)[number])) {
             emotion = body.emotion;
+            updates.emotion = emotion;
           }
-          if (typeof body.bulb === "boolean") bulb = body.bulb;
-          if (body.toggle_bulb) bulb = !bulb;
+          if (typeof body.bulb === "boolean") {
+            bulb = body.bulb;
+            updates.bulb = bulb;
+          }
+          if (body.toggle_bulb) {
+            bulb = !bulb;
+            updates.bulb = bulb;
+          }
           if (typeof body.intensity === "number" && Number.isFinite(body.intensity)) {
             intensity = Math.min(1, Math.max(0, body.intensity));
+            updates.intensity = intensity;
           }
 
           const eeg = Array.isArray(body.eeg)
             ? body.eeg.filter((n) => typeof n === "number" && Number.isFinite(n)).slice(-256)
             : (current?.eeg as number[] | null) ?? [];
+          if (Array.isArray(body.eeg)) updates.eeg = eeg;
 
-          const { data, error } = await supabaseAdmin
+          // Update only fields supplied by this request. Previously every
+          // partial EEG/lamp POST rewrote emotion from a prior read, allowing
+          // an older concurrent request to restore neutral after a ring press.
+          const { data: updated, error: updateError } = await supabaseAdmin
             .from("neuro_state")
-            .upsert(
-              {
-                id: ROW_ID,
-                device_id: body.device_id ?? request.headers.get("x-device-id") ?? "esp32-neuro-01",
-                client_name: clientName,
-                emotion,
-                intensity,
-                bulb,
-                eeg,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: "id" },
-            )
+            .update(updates)
+            .eq("id", ROW_ID)
             .select("id, device_id, client_name, emotion, intensity, bulb, eeg, updated_at")
-            .single();
+            .maybeSingle();
+
+          let data = updated;
+          let error = updateError;
+          if (!error && !data) {
+            const inserted = await supabaseAdmin
+              .from("neuro_state")
+              .upsert(
+                {
+                  id: ROW_ID,
+                  device_id: requestDeviceId ?? "esp32-neuro-01",
+                  client_name: clientName,
+                  emotion,
+                  intensity,
+                  bulb,
+                  eeg,
+                  updated_at: updates.updated_at,
+                },
+                { onConflict: "id" },
+              )
+              .select("id, device_id, client_name, emotion, intensity, bulb, eeg, updated_at")
+              .single();
+            data = inserted.data;
+            error = inserted.error;
+          }
 
           if (error) {
             return new Response(JSON.stringify({ ok: false, error: error.message }), {

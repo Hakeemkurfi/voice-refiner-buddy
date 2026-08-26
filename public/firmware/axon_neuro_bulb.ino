@@ -338,6 +338,10 @@ static unsigned long ringMiddleHeldAt = 0;
 volatile unsigned long lastMiddlePatternAt = 0;
 static int32_t ringGestureX = 0;
 static int32_t ringGestureY = 0;
+static uint32_t ringGestureLeftTravel = 0;
+static uint32_t ringGestureRightTravel = 0;
+static uint32_t ringGestureUpTravel = 0;
+static uint32_t ringGestureDownTravel = 0;
 static uint16_t ringGestureSamples = 0;
 static unsigned long ringGestureLastAt = 0;
 static const uint16_t RING_GESTURE_QUIET_MS = 95;
@@ -388,24 +392,38 @@ static void finishRingGesture() {
 
   int32_t x = ringGestureX;
   int32_t y = ringGestureY;
+  uint32_t leftTravel = ringGestureLeftTravel;
+  uint32_t rightTravel = ringGestureRightTravel;
+  uint32_t upTravel = ringGestureUpTravel;
+  uint32_t downTravel = ringGestureDownTravel;
   uint16_t samples = ringGestureSamples;
   ringGestureX = 0;
   ringGestureY = 0;
+  ringGestureLeftTravel = 0;
+  ringGestureRightTravel = 0;
+  ringGestureUpTravel = 0;
+  ringGestureDownTravel = 0;
   ringGestureSamples = 0;
 
-  int32_t ax = abs(x);
-  int32_t ay = abs(y);
-  Serial.printf("[ring] gesture complete: x=%ld y=%ld samples=%u\n", (long)x, (long)y, samples);
+  uint32_t horizontalStrength = max(leftTravel, rightTravel);
+  uint32_t verticalStrength = max(upTravel, downTravel);
+  Serial.printf("[ring] gesture complete: x=%ld y=%ld L=%lu R=%lu U=%lu D=%lu samples=%u\n",
+                (long)x, (long)y, (unsigned long)leftTravel, (unsigned long)rightTravel,
+                (unsigned long)upTravel, (unsigned long)downTravel, samples);
 
-  // The saved calibration shows curved multi-packet traces, so classify the
-  // NET dominant axis after the complete burst rather than reacting to any
-  // individual noisy packet. A side gesture can therefore never toggle bulb.
-  if (ax < 70 && ay < 70) {
+  // Up/down reports curve back toward zero near the end of the burst, so their
+  // net Y can be small even after a deliberate vertical swipe. Use accumulated
+  // directional travel to preserve that movement. This leaves the proven
+  // left/right mapping unchanged while making both vertical gestures reliable.
+  if (horizontalStrength < 55 && verticalStrength < 45) {
     Serial.println("[ring] gesture ignored: below movement threshold");
     return;
   }
-  if (ax >= ay) ringAction(x > 0 ? "next" : "prev");
-  else          ringAction(y < 0 ? "int_up" : "int_down");
+  if (verticalStrength > horizontalStrength) {
+    ringAction(upTravel >= downTravel ? "int_up" : "int_down");
+  } else {
+    ringAction(rightTravel >= leftTravel ? "next" : "prev");
+  }
 }
 
 static void processPendingRingCommand() {
@@ -465,10 +483,18 @@ static void handleRingReport(uint8_t* d, size_t len) {
       if (ringGestureSamples && millis() - ringGestureLastAt > 180) {
         ringGestureX = 0;
         ringGestureY = 0;
+        ringGestureLeftTravel = 0;
+        ringGestureRightTravel = 0;
+        ringGestureUpTravel = 0;
+        ringGestureDownTravel = 0;
         ringGestureSamples = 0;
       }
       ringGestureX += dx;
       ringGestureY += dy;
+      if (dx < 0) ringGestureLeftTravel += (uint8_t)(-dx);
+      if (dx > 0) ringGestureRightTravel += (uint8_t)dx;
+      if (dy < 0) ringGestureUpTravel += (uint8_t)(-dy);
+      if (dy > 0) ringGestureDownTravel += (uint8_t)dy;
       ringGestureSamples++;
       ringGestureLastAt = millis();
     }

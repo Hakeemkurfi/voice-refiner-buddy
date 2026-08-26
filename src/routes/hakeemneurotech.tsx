@@ -402,7 +402,7 @@ function Header({ linked, clientName }: { linked: "offline" | "live"; clientName
             NeuroSync Cortical Console
           </h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed opacity-70">
-            Real-time emotion decoding from EEG headset streams, with thought-physical action driven. Developed by Hakeem Kurfi Katsina Nigeria&nbsp;
+            Real-time emotion decoding from EEG headset streams, with thought-physical action driven. Developed by Hakeem Kurfi and Aliyan Aziz · Katsina, Nigeria
           </p>
         </div>
       </div>
@@ -1011,7 +1011,7 @@ function Footer() {
         Axon Dynamics
       </p>
 
-      <p className="mt-1">Developed by Hakeem Kurfi · Katsina, Nigeria</p>
+      <p className="mt-1">Developed by Hakeem Kurfi and Aliyan Aziz · Katsina, Nigeria</p>
       <p className="mt-1 opacity-70">
         Harbin Engineering University — Department of Science and Intelligent Systems · Class of AI ·
         Research: Neuroscience

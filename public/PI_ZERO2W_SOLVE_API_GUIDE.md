@@ -101,3 +101,29 @@ Install once on the Pi: `sudo apt install -y python3-requests mpg123 libcamera-a
   clearer the page, the better the answer.
 - The endpoint is public: anyone with the URL can use it, so don't post the URL
   publicly if you want to protect your AI credits.
+
+## Simplest option: /api/public/ask (plain text answer, no speech)
+
+`POST https://axondynamics.lovable.app/api/public/ask`
+
+Send any of these and you get the answer back as plain text:
+
+```bash
+# just a question
+curl -s -X POST -H "Content-Type: text/plain" \
+     --data "What is 17 times 23?" \
+     https://axondynamics.lovable.app/api/public/ask
+
+# a photo of a page
+curl -s -X POST --data-binary @page.jpg -H "Content-Type: image/jpeg" \
+     https://axondynamics.lovable.app/api/public/ask
+
+# photo + your own question
+curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"prompt":"Solve question 3 only","image_b64":"<base64 jpeg>","model":"pro"}' \
+     https://axondynamics.lovable.app/api/public/ask
+```
+
+Options: `?q=your+question` with a raw JPEG, `?model=pro` for the stronger model,
+`?format=json` to get `{"answer":"..."}` instead of plain text.
+Handle the speech yourself — this endpoint only returns text.

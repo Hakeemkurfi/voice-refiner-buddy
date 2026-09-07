@@ -16,6 +16,7 @@ import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigge
 import { Route as ApiPublicSolveRouteImport } from './routes/api/public/solve'
 import { Route as ApiPublicNeuroRouteImport } from './routes/api/public/neuro'
 import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
+import { Route as ApiPublicAskRouteImport } from './routes/api/public/ask'
 import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/burst.finalize'
 
 const HakeemneurotechRoute = HakeemneurotechRouteImport.update({
@@ -53,6 +54,11 @@ const ApiPublicEventRoute = ApiPublicEventRouteImport.update({
   path: '/api/public/event',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicAskRoute = ApiPublicAskRouteImport.update({
+  id: '/api/public/ask',
+  path: '/api/public/ask',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicBurstFinalizeRoute = ApiPublicBurstFinalizeRouteImport.update({
   id: '/api/public/burst/finalize',
   path: '/api/public/burst/finalize',
@@ -62,6 +68,7 @@ const ApiPublicBurstFinalizeRoute = ApiPublicBurstFinalizeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/hakeemneurotech': typeof HakeemneurotechRoute
+  '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/solve': typeof ApiPublicSolveRoute
@@ -72,6 +79,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/hakeemneurotech': typeof HakeemneurotechRoute
+  '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/solve': typeof ApiPublicSolveRoute
@@ -83,6 +91,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/hakeemneurotech': typeof HakeemneurotechRoute
+  '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
   '/api/public/solve': typeof ApiPublicSolveRoute
@@ -95,6 +104,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/hakeemneurotech'
+    | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
     | '/api/public/solve'
@@ -105,6 +115,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/hakeemneurotech'
+    | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
     | '/api/public/solve'
@@ -115,6 +126,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/hakeemneurotech'
+    | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
     | '/api/public/solve'
@@ -126,6 +138,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HakeemneurotechRoute: typeof HakeemneurotechRoute
+  ApiPublicAskRoute: typeof ApiPublicAskRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
   ApiPublicNeuroRoute: typeof ApiPublicNeuroRoute
   ApiPublicSolveRoute: typeof ApiPublicSolveRoute
@@ -185,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEventRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/ask': {
+      id: '/api/public/ask'
+      path: '/api/public/ask'
+      fullPath: '/api/public/ask'
+      preLoaderRoute: typeof ApiPublicAskRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/burst/finalize': {
       id: '/api/public/burst/finalize'
       path: '/api/public/burst/finalize'
@@ -198,6 +218,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HakeemneurotechRoute: HakeemneurotechRoute,
+  ApiPublicAskRoute: ApiPublicAskRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
   ApiPublicNeuroRoute: ApiPublicNeuroRoute,
   ApiPublicSolveRoute: ApiPublicSolveRoute,

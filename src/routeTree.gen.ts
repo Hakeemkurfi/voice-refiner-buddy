@@ -13,6 +13,7 @@ import { Route as HakeemneurotechRouteImport } from './routes/hakeemneurotech'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
 import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
+import { Route as ApiPublicSolveRouteImport } from './routes/api/public/solve'
 import { Route as ApiPublicNeuroRouteImport } from './routes/api/public/neuro'
 import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
 import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/burst.finalize'
@@ -37,6 +38,11 @@ const ApiPublicTriggerRoute = ApiPublicTriggerRouteImport.update({
   path: '/api/public/trigger',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicSolveRoute = ApiPublicSolveRouteImport.update({
+  id: '/api/public/solve',
+  path: '/api/public/solve',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicNeuroRoute = ApiPublicNeuroRouteImport.update({
   id: '/api/public/neuro',
   path: '/api/public/neuro',
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/hakeemneurotech': typeof HakeemneurotechRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
+  '/api/public/solve': typeof ApiPublicSolveRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/hakeemneurotech': typeof HakeemneurotechRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
+  '/api/public/solve': typeof ApiPublicSolveRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/hakeemneurotech': typeof HakeemneurotechRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
+  '/api/public/solve': typeof ApiPublicSolveRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
   '/api/public/burst/finalize': typeof ApiPublicBurstFinalizeRoute
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/hakeemneurotech'
     | '/api/public/event'
     | '/api/public/neuro'
+    | '/api/public/solve'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
@@ -97,6 +107,7 @@ export interface FileRouteTypes {
     | '/hakeemneurotech'
     | '/api/public/event'
     | '/api/public/neuro'
+    | '/api/public/solve'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
@@ -106,6 +117,7 @@ export interface FileRouteTypes {
     | '/hakeemneurotech'
     | '/api/public/event'
     | '/api/public/neuro'
+    | '/api/public/solve'
     | '/api/public/trigger'
     | '/api/public/tts'
     | '/api/public/burst/finalize'
@@ -116,6 +128,7 @@ export interface RootRouteChildren {
   HakeemneurotechRoute: typeof HakeemneurotechRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
   ApiPublicNeuroRoute: typeof ApiPublicNeuroRoute
+  ApiPublicSolveRoute: typeof ApiPublicSolveRoute
   ApiPublicTriggerRoute: typeof ApiPublicTriggerRoute
   ApiPublicTtsRoute: typeof ApiPublicTtsRoute
   ApiPublicBurstFinalizeRoute: typeof ApiPublicBurstFinalizeRoute
@@ -151,6 +164,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicTriggerRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/solve': {
+      id: '/api/public/solve'
+      path: '/api/public/solve'
+      fullPath: '/api/public/solve'
+      preLoaderRoute: typeof ApiPublicSolveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/neuro': {
       id: '/api/public/neuro'
       path: '/api/public/neuro'
@@ -180,6 +200,7 @@ const rootRouteChildren: RootRouteChildren = {
   HakeemneurotechRoute: HakeemneurotechRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
   ApiPublicNeuroRoute: ApiPublicNeuroRoute,
+  ApiPublicSolveRoute: ApiPublicSolveRoute,
   ApiPublicTriggerRoute: ApiPublicTriggerRoute,
   ApiPublicTtsRoute: ApiPublicTtsRoute,
   ApiPublicBurstFinalizeRoute: ApiPublicBurstFinalizeRoute,

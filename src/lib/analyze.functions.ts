@@ -355,7 +355,11 @@ async function callGeminiOCR(
 function deepseekVisionModels(): string[] {
   const raw = process.env["DEEPSEEK_VISION_MODELS"] ?? process.env["DEEPSEEK_VISION_MODEL"] ?? "";
   const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return list.length > 0 ? list : ["deepseek-vl2", "deepseek-chat"];
+  return list.length > 0 ? list : ["deepseek-v4-flash-vision-exp", "deepseek-vl2"];
+}
+
+function deepseekTextModel(): string {
+  return process.env["DEEPSEEK_TEXT_MODEL"]?.trim() || "deepseek-v4-flash";
 }
 
 async function callDeepSeekVision(
@@ -426,7 +430,7 @@ async function solveWithDeepSeek(
     (contextText?.trim() ? `\n\nClass material to follow:\n${contextText.trim()}` : "");
 
   const body = {
-    model: "deepseek-chat",
+    model: deepseekTextModel(),
     messages: [
       { role: "system", content: DEEPSEEK_SOLVER_PROMPT },
       { role: "user", content: userContent },
@@ -634,7 +638,7 @@ export const analyzeImage = createServerFn({ method: "POST" })
             confidence:
               typeof solved.confidence === "number" ? solved.confidence : visionParsed.confidence,
           },
-          `${visionProvider}+deepseek-chat`,
+          `${visionProvider}+${deepseekTextModel()}`,
           false,
           flashPayload.images_b64.length,
           sources,

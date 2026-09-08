@@ -28,7 +28,11 @@ const GEMINI_MODELS: Record<string, string[]> = {
 function deepseekVisionModels(): string[] {
   const raw = process.env["DEEPSEEK_VISION_MODELS"] ?? process.env["DEEPSEEK_VISION_MODEL"] ?? "";
   const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
-  return list.length > 0 ? list : ["deepseek-vl2", "deepseek-chat"];
+  return list.length > 0 ? list : ["deepseek-v4-flash-vision-exp", "deepseek-vl2"];
+}
+
+function deepseekTextModel(): string {
+  return process.env["DEEPSEEK_TEXT_MODEL"]?.trim() || "deepseek-v4-flash";
 }
 
 function toBase64(bytes: Uint8Array): string {
@@ -62,7 +66,7 @@ async function askDeepSeek(
     : prompt;
 
   let lastError = "DeepSeek request failed.";
-  const models = imageB64 ? deepseekVisionModels() : ["deepseek-chat"];
+  const models = imageB64 ? deepseekVisionModels() : [deepseekTextModel()];
 
   for (const model of models) {
     const res = await fetch("https://api.deepseek.com/chat/completions", {

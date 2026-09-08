@@ -78,19 +78,51 @@ def ask(image: Path | None, prompt: str | None = None) -> dict:
     return r.json()
 
 
+def _speak_one(text: str) -> None:
+    """Stream MP3 bytes straight into mpg123 so sound starts almost at once."""
+    r = requests.post(f"{BASE}/api/public/tts",
+                      json={"text": text[:3500], "voice": VOICE, "speed": float(SPEED)},
+                      timeout=180, stream=True)
+    r.raise_for_status()
+    p = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
+    try:
+        for chunk in r.iter_content(chunk_size=4096):
+            if chunk:
+                p.stdin.write(chunk)
+    finally:
+        try:
+            p.stdin.close()
+        except Exception:
+            pass
+        p.wait()
+
+
+def _sentences(text: str, target: int = 220) -> list[str]:
+    """Split into short pieces so the first one is spoken while the rest render."""
+    import re
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    out: list[str] = []
+    cur = ""
+    for s in parts:
+        if cur and len(cur) + len(s) > target:
+            out.append(cur.strip())
+            cur = ""
+        cur += " " + s
+    if cur.strip():
+        out.append(cur.strip())
+    return [p for p in out if p]
+
+
 def speak(text: str) -> None:
     if not text.strip():
         return
     try:
-        r = requests.post(f"{BASE}/api/public/tts",
-                          json={"text": text[:4000], "voice": VOICE, "speed": float(SPEED)},
-                          timeout=180)
-        r.raise_for_status()
-        p = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
-        p.communicate(r.content)
+        for piece in _sentences(text):
+            _speak_one(piece)
     except Exception as e:  # offline / TTS down -> local voice
         log(f"cloud speech failed ({e}); using local voice")
         subprocess.run(["espeak-ng", "-s", "150", text[:2000]], check=False)
+
 
 
 def run_once() -> str:

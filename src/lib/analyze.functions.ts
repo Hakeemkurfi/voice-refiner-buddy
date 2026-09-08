@@ -117,6 +117,12 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 
 4. Keep memorization in mind: prefer short, punchy sentences the student can repeat once and remember. Do NOT pad, do NOT re-read the question, do NOT explain theory that was not asked.
 
+RESOURCE RULES (when "COURSE RESOURCE EXTRACTS" are supplied):
+- They are reference material, NOT the task. The page text is always the actual problem.
+- When they are relevant, follow their terminology, definitions, notation, formulas and course-specific methods, and you may say "According to your course material..." at most once.
+- When they are irrelevant or conflict with the visible problem, ignore them and solve the real problem; if the difference matters, mention it in one short sentence.
+- Never quote raw document formatting, tables, page headers or citation markup into the spoken steps.
+
 confidence = 0.0 to 1.0 — how sure you are of the final answer.`;
 
 // ─── Direct Google Gemini REST API ────────────────────────────────────────────
@@ -654,11 +660,11 @@ export const analyzeImage = createServerFn({ method: "POST" })
 
     if (mode === "flash") {
       const { parsed, provider } = await callWithFallback("flash", flashPayload, geminiKey, lovableKey);
-      return finalize(parsed, provider, false, flashPayload.images_b64.length);
+      return finalize(parsed, provider, false, flashPayload.images_b64.length, fallbackSources);
     }
     if (mode === "pro") {
       const { parsed, provider } = await callWithFallback("pro", proPayload, geminiKey, lovableKey);
-      return finalize(parsed, provider, false, proPayload.images_b64.length);
+      return finalize(parsed, provider, false, proPayload.images_b64.length, fallbackSources);
     }
 
     // AUTO: Flash + 1 frame first; only escalate to Pro + multi-frame if weak.
@@ -684,7 +690,7 @@ export const analyzeImage = createServerFn({ method: "POST" })
       }
     }
 
-    return finalize(result, used, escalated, framesUsed);
+    return finalize(result, used, escalated, framesUsed, fallbackSources);
   });
 
 function finalize(

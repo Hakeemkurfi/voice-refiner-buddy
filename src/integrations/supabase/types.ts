@@ -139,12 +139,123 @@ export type Database = {
         }
         Relationships: []
       }
+      resource_chunks: {
+        Row: {
+          chunk_index: number
+          content: string
+          created_at: string
+          embedding: string | null
+          id: string
+          page: number | null
+          resource_id: string
+          section: string | null
+          tsv: unknown
+        }
+        Insert: {
+          chunk_index: number
+          content: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          page?: number | null
+          resource_id: string
+          section?: string | null
+          tsv?: unknown
+        }
+        Update: {
+          chunk_index?: number
+          content?: string
+          created_at?: string
+          embedding?: string | null
+          id?: string
+          page?: number | null
+          resource_id?: string
+          section?: string | null
+          tsv?: unknown
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resource_chunks_resource_id_fkey"
+            columns: ["resource_id"]
+            isOneToOne: false
+            referencedRelation: "resources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      resources: {
+        Row: {
+          char_count: number
+          chunk_count: number
+          course: string | null
+          created_at: string
+          doc_type: string | null
+          id: string
+          page_count: number
+          semester: string | null
+          source_filename: string | null
+          status: string
+          subject: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          char_count?: number
+          chunk_count?: number
+          course?: string | null
+          created_at?: string
+          doc_type?: string | null
+          id?: string
+          page_count?: number
+          semester?: string | null
+          source_filename?: string | null
+          status?: string
+          subject?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          char_count?: number
+          chunk_count?: number
+          course?: string | null
+          created_at?: string
+          doc_type?: string | null
+          id?: string
+          page_count?: number
+          semester?: string | null
+          source_filename?: string | null
+          status?: string
+          subject?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      match_resource_chunks: {
+        Args: {
+          filter_course?: string
+          match_count?: number
+          min_similarity?: number
+          query_embedding: string
+        }
+        Returns: {
+          chunk_id: string
+          chunk_index: number
+          content: string
+          course: string
+          page: number
+          resource_id: string
+          section: string
+          similarity: number
+          subject: string
+          title: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

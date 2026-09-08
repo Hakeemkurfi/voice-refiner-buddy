@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as HakeemneurotechRouteImport } from './routes/hakeemneurotech'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
@@ -19,6 +20,11 @@ import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
 import { Route as ApiPublicAskRouteImport } from './routes/api/public/ask'
 import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/burst.finalize'
 
+const ResourcesRoute = ResourcesRouteImport.update({
+  id: '/resources',
+  path: '/resources',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HakeemneurotechRoute = HakeemneurotechRouteImport.update({
   id: '/hakeemneurotech',
   path: '/hakeemneurotech',
@@ -68,6 +74,7 @@ const ApiPublicBurstFinalizeRoute = ApiPublicBurstFinalizeRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/hakeemneurotech': typeof HakeemneurotechRoute
+  '/resources': typeof ResourcesRoute
   '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
@@ -79,6 +86,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/hakeemneurotech': typeof HakeemneurotechRoute
+  '/resources': typeof ResourcesRoute
   '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
@@ -91,6 +99,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/hakeemneurotech': typeof HakeemneurotechRoute
+  '/resources': typeof ResourcesRoute
   '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
@@ -104,6 +113,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/hakeemneurotech'
+    | '/resources'
     | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
@@ -115,6 +125,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/hakeemneurotech'
+    | '/resources'
     | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
@@ -126,6 +137,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/hakeemneurotech'
+    | '/resources'
     | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
@@ -138,6 +150,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   HakeemneurotechRoute: typeof HakeemneurotechRoute
+  ResourcesRoute: typeof ResourcesRoute
   ApiPublicAskRoute: typeof ApiPublicAskRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
   ApiPublicNeuroRoute: typeof ApiPublicNeuroRoute
@@ -149,6 +162,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/resources': {
+      id: '/resources'
+      path: '/resources'
+      fullPath: '/resources'
+      preLoaderRoute: typeof ResourcesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/hakeemneurotech': {
       id: '/hakeemneurotech'
       path: '/hakeemneurotech'
@@ -218,6 +238,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   HakeemneurotechRoute: HakeemneurotechRoute,
+  ResourcesRoute: ResourcesRoute,
   ApiPublicAskRoute: ApiPublicAskRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
   ApiPublicNeuroRoute: ApiPublicNeuroRoute,

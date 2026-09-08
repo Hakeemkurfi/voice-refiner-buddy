@@ -49,16 +49,22 @@ export const Route = createFileRoute("/api/public/solve")({
           const contentType = request.headers.get("content-type") ?? "";
           let image_b64 = "";
           let contextText: string | undefined;
-          let model: "auto" | "flash" | "pro" | "deepseek" = "auto";
+          let model: "auto" | "flash" | "pro" | "deepseek" = "deepseek";
+          let course: string | undefined;
+          let question: string | undefined;
 
           if (contentType.includes("application/json")) {
             const body = (await request.json().catch(() => ({}))) as {
               image_b64?: string;
               contextText?: string;
               model?: string;
+              course?: string;
+              question?: string;
             };
             image_b64 = (body.image_b64 ?? "").replace(/^data:image\/\w+;base64,/, "");
             contextText = body.contextText?.slice(0, 12000);
+            course = body.course?.slice(0, 120);
+            question = body.question?.slice(0, 2000);
             if (body.model === "flash" || body.model === "pro" || body.model === "deepseek") {
               model = body.model;
             }
@@ -73,7 +79,9 @@ export const Route = createFileRoute("/api/public/solve")({
             image_b64 = toBase64(buf);
             const url = new URL(request.url);
             const q = url.searchParams.get("model");
-            if (q === "flash" || q === "pro" || q === "deepseek") model = q;
+            if (q === "flash" || q === "pro" || q === "deepseek" || q === "auto") model = q;
+            course = url.searchParams.get("course") ?? undefined;
+            question = url.searchParams.get("q") ?? undefined;
           }
 
           if (image_b64.length < 100) {
@@ -83,7 +91,7 @@ export const Route = createFileRoute("/api/public/solve")({
             );
           }
 
-          const result = await analyzeImage({ data: { image_b64, contextText, model } });
+          const result = await analyzeImage({ data: { image_b64, contextText, model, course, question } });
           return new Response(JSON.stringify(result), { status: 200, headers: JSON_HEADERS });
         } catch (e) {
           return new Response(

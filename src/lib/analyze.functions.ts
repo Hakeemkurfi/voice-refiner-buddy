@@ -5,6 +5,9 @@ const Input = z.object({
   image_b64: z.string().min(0).optional(),
   burst_id: z.string().uuid().optional(),
   contextText: z.string().max(12000).optional(),
+  question: z.string().max(2000).optional(),
+  course: z.string().max(120).optional().nullable(),
+  useResources: z.boolean().optional(),
   model: z.enum(["flash", "pro", "auto", "deepseek"]).optional(),
 });
 
@@ -14,6 +17,15 @@ type Parsed = {
   steps?: string[];
   extractedText?: string;
   confidence?: number;
+};
+
+type SourceRef = {
+  title: string;
+  course: string | null;
+  section: string | null;
+  page: number | null;
+  similarity: number;
+  excerpt: string;
 };
 
 // ─── System prompt (dictation-friendly tutor) ────────────────────────────────
@@ -104,6 +116,12 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
    - No markdown, no LaTeX, no raw symbols anywhere inside steps (LaTeX only in extractedText).
 
 4. Keep memorization in mind: prefer short, punchy sentences the student can repeat once and remember. Do NOT pad, do NOT re-read the question, do NOT explain theory that was not asked.
+
+RESOURCE RULES (when "COURSE RESOURCE EXTRACTS" are supplied):
+- They are reference material, NOT the task. The page text is always the actual problem.
+- When they are relevant, follow their terminology, definitions, notation, formulas and course-specific methods, and you may say "According to your course material..." at most once.
+- When they are irrelevant or conflict with the visible problem, ignore them and solve the real problem; if the difference matters, mention it in one short sentence.
+- Never quote raw document formatting, tables, page headers or citation markup into the spoken steps.
 
 confidence = 0.0 to 1.0 — how sure you are of the final answer.`;
 
@@ -332,14 +350,79 @@ async function callGeminiOCR(
   return callGemini(modelId, data, apiKey, OCR_PROMPT);
 }
 
-// ─── DeepSeek solver (text-only) ─────────────────────────────────────────────
+// ─── DeepSeek vision (primary provider, OpenAI-compatible) ───────────────────
+// Model ids come from env so the vision provider can change without a rebuild.
+function deepseekVisionModels(): string[] {
+  const raw = process.env["DEEPSEEK_VISION_MODELS"] ?? process.env["DEEPSEEK_VISION_MODEL"] ?? "";
+  const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return list.length > 0 ? list : ["deepseek-vl2", "deepseek-chat"];
+}
+
+async function callDeepSeekVision(
+  images_b64: string[],
+  apiKey: string,
+  prompt: string,
+  userText: string,
+): Promise<Parsed> {
+  const content = [
+    { type: "text", text: userText },
+    ...images_b64.map((b64) => ({
+      type: "image_url",
+      image_url: { url: `data:image/jpeg;base64,${b64}` },
+    })),
+  ];
+
+  let lastError = "DeepSeek vision failed.";
+  for (const model of deepseekVisionModels()) {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(60000),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.1,
+        max_tokens: 4096,
+      }),
+    }).catch((error) => {
+      lastError = `DeepSeek ${model}: ${(error as Error).message}`;
+      return null;
+    });
+    if (!res) continue;
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      lastError = `DeepSeek ${model} HTTP ${res.status}: ${txt.slice(0, 200)}`;
+      if (res.status === 401) throw new Error("Invalid DEEPSEEK_API_KEY. Update it in project secrets.");
+      if (res.status === 402) throw new Error("DeepSeek account out of credits. Top up at platform.deepseek.com.");
+      continue; // model may not exist / not accept images → try the next one
+    }
+
+    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const raw = json.choices?.[0]?.message?.content ?? "";
+    const parsed = safeParseJsonObject(raw);
+    if (parsed && ((parsed.extractedText ?? "").trim() || (parsed.steps ?? []).length > 0)) return parsed;
+    lastError = `DeepSeek ${model} returned nothing usable.`;
+  }
+  throw new Error(lastError);
+}
+
+// ─── DeepSeek solver (text-only, resource-aware) ─────────────────────────────
 async function solveWithDeepSeek(
   extractedText: string,
   contextText: string | undefined,
   apiKey: string,
+  resourceContext?: string,
 ): Promise<Parsed> {
   const userContent =
     `Extracted page text:\n---\n${extractedText.trim()}\n---` +
+    (resourceContext?.trim()
+      ? `\n\nRELEVANT COURSE RESOURCE EXTRACTS (reference only — the page above is the actual task):\n${resourceContext.trim()}`
+      : "") +
     (contextText?.trim() ? `\n\nClass material to follow:\n${contextText.trim()}` : "");
 
   const body = {
@@ -468,54 +551,120 @@ export const analyzeImage = createServerFn({ method: "POST" })
       throw new Error("No image provided (need image_b64 or burst_id)");
     }
 
-    const mode = data.model ?? "auto";
+    // DeepSeek is the PRIMARY provider. Gemini / Lovable AI stay as fallbacks.
+    const mode = data.model ?? "deepseek";
 
     // ── COST SAVER: Flash uses ONLY the sharpest single frame ──
     // Multi-frame is reserved for Pro escalation when Flash result is weak.
     const flashPayload = { images_b64: images_b64.slice(0, 1), contextText: data.contextText };
     const proPayload = { images_b64: images_b64.slice(0, 3), contextText: data.contextText };
 
-    // ── DEEPSEEK BRANCH ───────────────────────────────────────────────────────
-    // DeepSeek is text-only and cannot read images. So we first use Gemini for
-    // OCR only (fast + cheap), then DeepSeek solves & produces the dictation.
-    // This uses your paid DeepSeek balance instead of Lovable AI credits.
-    if (deepseekKey && geminiKey && mode === "deepseek") {
+    // ── RAG: retrieve course-resource context (never blocks the answer) ───────
+    const retrieveContext = async (seed: string) => {
+      if (data.useResources === false) return { block: "", sources: [] as SourceRef[] };
       try {
-        let ocr = await callGeminiOCR("flash", flashPayload, geminiKey);
-        if (isWeakOCR(ocr)) {
-          const ocrPro = await callGeminiOCR("pro", proPayload, geminiKey);
-          if ((ocrPro.extractedText ?? "").trim().length > (ocr.extractedText ?? "").trim().length) {
-            ocr = ocrPro;
+        const { retrieveChunks, buildContextBlock } = await import("./rag.server");
+        const chunks = await retrieveChunks(seed, { course: data.course ?? null, limit: 6 });
+        return {
+          block: buildContextBlock(chunks),
+          sources: chunks.map((c) => ({
+            title: c.title,
+            course: c.course,
+            section: c.section,
+            page: c.page,
+            similarity: Number(c.similarity.toFixed(3)),
+            excerpt: c.content.slice(0, 240),
+          })),
+        };
+      } catch (e) {
+        console.warn("[rag] retrieval skipped:", (e as Error).message);
+        return { block: "", sources: [] as SourceRef[] };
+      }
+    };
+
+    // ── DEEPSEEK PRIMARY PIPELINE ─────────────────────────────────────────────
+    // VISION (DeepSeek → Gemini OCR fallback) → RAG → DeepSeek reasoning
+    if (deepseekKey && mode !== "flash" && mode !== "pro") {
+      try {
+        const askText =
+          (data.question?.trim()
+            ? `Student question: ${data.question.trim()}\n\n`
+            : "") + "Read this page and extract every word, number and equation.";
+
+        let visionParsed: Parsed | null = null;
+        let visionProvider = "deepseek-vision";
+
+        try {
+          visionParsed = await callDeepSeekVision(
+            flashPayload.images_b64,
+            deepseekKey,
+            OCR_PROMPT,
+            askText,
+          );
+        } catch (visionError) {
+          if (!geminiKey) throw visionError;
+          console.warn("[vision] DeepSeek vision unavailable:", (visionError as Error).message);
+          let ocr = await callGeminiOCR("flash", flashPayload, geminiKey);
+          if (isWeakOCR(ocr)) {
+            const ocrPro = await callGeminiOCR("pro", proPayload, geminiKey);
+            if ((ocrPro.extractedText ?? "").trim().length > (ocr.extractedText ?? "").trim().length) {
+              ocr = ocrPro;
+            }
           }
+          visionParsed = ocr;
+          visionProvider = "gemini-ocr";
         }
+
+        const pageText = (visionParsed.extractedText ?? "").trim();
+        const { block, sources } = await retrieveContext(
+          [data.question ?? "", pageText].filter(Boolean).join("\n").slice(0, 4000),
+        );
+
         const solved = await solveWithDeepSeek(
-          ocr.extractedText ?? "",
+          (data.question?.trim() ? `Student question: ${data.question.trim()}\n\n` : "") + pageText,
           data.contextText,
           deepseekKey,
+          block,
         );
+
         return finalize(
           {
             ...solved,
-            extractedText: ocr.extractedText ?? solved.extractedText ?? "",
-            confidence: typeof solved.confidence === "number" ? solved.confidence : ocr.confidence,
+            extractedText: pageText || solved.extractedText || "",
+            confidence:
+              typeof solved.confidence === "number" ? solved.confidence : visionParsed.confidence,
           },
-          "deepseek-chat",
+          `${visionProvider}+deepseek-chat`,
           false,
           flashPayload.images_b64.length,
+          sources,
         );
       } catch (e) {
-        // If DeepSeek branch fails, fall through to the normal Gemini flow.
-        console.warn("DeepSeek branch failed:", (e as Error).message);
+        // Never fail: fall through to the Gemini / Lovable AI path.
+        console.warn("DeepSeek pipeline failed:", (e as Error).message);
       }
     }
 
+    // Fallback providers also get resource context when a question is supplied.
+    let fallbackSources: SourceRef[] = [];
+    if (data.question?.trim()) {
+      const { block, sources } = await retrieveContext(data.question.trim());
+      if (block) {
+        const extra = `\n\nCOURSE RESOURCE EXTRACTS (reference only):\n${block}`;
+        flashPayload.contextText = `${flashPayload.contextText ?? ""}${extra}`.slice(0, 12000);
+        proPayload.contextText = flashPayload.contextText;
+        fallbackSources = sources;
+      }
+    }
+
+
     if (mode === "flash") {
       const { parsed, provider } = await callWithFallback("flash", flashPayload, geminiKey, lovableKey);
-      return finalize(parsed, provider, false, flashPayload.images_b64.length);
+      return finalize(parsed, provider, false, flashPayload.images_b64.length, fallbackSources);
     }
     if (mode === "pro") {
       const { parsed, provider } = await callWithFallback("pro", proPayload, geminiKey, lovableKey);
-      return finalize(parsed, provider, false, proPayload.images_b64.length);
+      return finalize(parsed, provider, false, proPayload.images_b64.length, fallbackSources);
     }
 
     // AUTO: Flash + 1 frame first; only escalate to Pro + multi-frame if weak.
@@ -541,7 +690,7 @@ export const analyzeImage = createServerFn({ method: "POST" })
       }
     }
 
-    return finalize(result, used, escalated, framesUsed);
+    return finalize(result, used, escalated, framesUsed, fallbackSources);
   });
 
 function finalize(
@@ -549,6 +698,7 @@ function finalize(
   modelUsed: string,
   escalated: boolean,
   framesUsed: number,
+  sources: SourceRef[] = [],
 ) {
   const steps = (parsed.steps ?? []).filter(
     (s) => typeof s === "string" && s.trim().length > 0,
@@ -565,5 +715,7 @@ function finalize(
     modelUsed,
     escalated,
     framesUsed,
+    sources,
   };
 }
+

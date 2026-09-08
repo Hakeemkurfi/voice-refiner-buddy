@@ -680,6 +680,7 @@ function finalize(
   modelUsed: string,
   escalated: boolean,
   framesUsed: number,
+  sources: SourceRef[] = [],
 ) {
   const steps = (parsed.steps ?? []).filter(
     (s) => typeof s === "string" && s.trim().length > 0,
@@ -696,5 +697,7 @@ function finalize(
     modelUsed,
     escalated,
     framesUsed,
+    sources,
   };
 }
+

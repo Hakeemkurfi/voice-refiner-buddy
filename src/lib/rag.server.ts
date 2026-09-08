@@ -181,7 +181,7 @@ export async function retrieveChunks(
   ).slice(0, 8);
   if (words.length === 0) return [];
 
-  const { data, error } = await supabaseAdmin
+  const { data, error } = await db()
     .from("resource_chunks")
     .select("id, resource_id, chunk_index, content, page, section, resources(title, course, subject)")
     .textSearch("tsv", words.join(" | "), { config: "english" })
@@ -189,8 +189,12 @@ export async function retrieveChunks(
 
   if (error || !data) return [];
 
-  return data.map((row) => {
-    const r = (row as unknown as { resources?: { title?: string; course?: string; subject?: string } }).resources;
+  return (data as unknown as Array<{
+    id: string; resource_id: string; chunk_index: number; content: string;
+    page: number | null; section: string | null;
+    resources?: { title?: string; course?: string; subject?: string };
+  }>).map((row) => {
+    const r = row.resources;
     return {
       chunk_id: row.id,
       resource_id: row.resource_id,

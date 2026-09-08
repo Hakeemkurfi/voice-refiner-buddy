@@ -161,16 +161,16 @@ export async function retrieveChunks(
   // 1. Semantic search
   const embedded = await embedTexts([q]);
   if (embedded?.[0]) {
-    const rpc = db().rpc as unknown as (
-      fn: string,
-      args: Record<string, unknown>,
-    ) => Promise<{ data: RetrievedChunk[] | null; error: { message: string } | null }>;
-    const { data, error } = await rpc("match_resource_chunks", {
+    const client = db();
+    const { data, error } = (await client.rpc("match_resource_chunks" as never, {
       query_embedding: JSON.stringify(embedded[0]),
       match_count: limit,
       filter_course: opts.course ?? null,
       min_similarity: 0.15,
-    });
+    } as never)) as unknown as {
+      data: RetrievedChunk[] | null;
+      error: { message: string } | null;
+    };
     if (!error && Array.isArray(data) && data.length > 0) return data;
     if (error) console.warn("[rag] vector search failed:", error.message);
   }

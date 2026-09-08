@@ -246,7 +246,7 @@ export const Route = createFileRoute("/api/public/ask")({
                 similarity: Number(c.similarity.toFixed(3)),
               }));
             } catch (e) {
-              console.warn("[rag] skipped:", (e as Error).stack ?? (e as Error).message);
+              console.warn("[rag] skipped:", (e as Error).message);
             }
           }
 

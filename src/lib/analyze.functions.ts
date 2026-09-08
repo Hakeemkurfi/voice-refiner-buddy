@@ -344,14 +344,79 @@ async function callGeminiOCR(
   return callGemini(modelId, data, apiKey, OCR_PROMPT);
 }
 
-// ─── DeepSeek solver (text-only) ─────────────────────────────────────────────
+// ─── DeepSeek vision (primary provider, OpenAI-compatible) ───────────────────
+// Model ids come from env so the vision provider can change without a rebuild.
+function deepseekVisionModels(): string[] {
+  const raw = process.env["DEEPSEEK_VISION_MODELS"] ?? process.env["DEEPSEEK_VISION_MODEL"] ?? "";
+  const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  return list.length > 0 ? list : ["deepseek-vl2", "deepseek-chat"];
+}
+
+async function callDeepSeekVision(
+  images_b64: string[],
+  apiKey: string,
+  prompt: string,
+  userText: string,
+): Promise<Parsed> {
+  const content = [
+    { type: "text", text: userText },
+    ...images_b64.map((b64) => ({
+      type: "image_url",
+      image_url: { url: `data:image/jpeg;base64,${b64}` },
+    })),
+  ];
+
+  let lastError = "DeepSeek vision failed.";
+  for (const model of deepseekVisionModels()) {
+    const res = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(60000),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content },
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.1,
+        max_tokens: 4096,
+      }),
+    }).catch((error) => {
+      lastError = `DeepSeek ${model}: ${(error as Error).message}`;
+      return null;
+    });
+    if (!res) continue;
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      lastError = `DeepSeek ${model} HTTP ${res.status}: ${txt.slice(0, 200)}`;
+      if (res.status === 401) throw new Error("Invalid DEEPSEEK_API_KEY. Update it in project secrets.");
+      if (res.status === 402) throw new Error("DeepSeek account out of credits. Top up at platform.deepseek.com.");
+      continue; // model may not exist / not accept images → try the next one
+    }
+
+    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+    const raw = json.choices?.[0]?.message?.content ?? "";
+    const parsed = safeParseJsonObject(raw);
+    if (parsed && ((parsed.extractedText ?? "").trim() || (parsed.steps ?? []).length > 0)) return parsed;
+    lastError = `DeepSeek ${model} returned nothing usable.`;
+  }
+  throw new Error(lastError);
+}
+
+// ─── DeepSeek solver (text-only, resource-aware) ─────────────────────────────
 async function solveWithDeepSeek(
   extractedText: string,
   contextText: string | undefined,
   apiKey: string,
+  resourceContext?: string,
 ): Promise<Parsed> {
   const userContent =
     `Extracted page text:\n---\n${extractedText.trim()}\n---` +
+    (resourceContext?.trim()
+      ? `\n\nRELEVANT COURSE RESOURCE EXTRACTS (reference only — the page above is the actual task):\n${resourceContext.trim()}`
+      : "") +
     (contextText?.trim() ? `\n\nClass material to follow:\n${contextText.trim()}` : "");
 
   const body = {

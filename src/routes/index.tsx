@@ -142,7 +142,7 @@ function Index() {
 
   const handleCapture = useCallback(async (
     arg: { image_b64?: string; burst_id?: string },
-    model: "flash" | "pro" | "auto" = "auto",
+    model: "flash" | "pro" | "auto" | "deepseek" = "deepseek",
   ) => {
     setBusy(true);
     setError(null);
@@ -613,7 +613,7 @@ function Index() {
           data: {
             image_b64: pages[i],
             contextText: contextRef.current,
-            model: "flash",
+            model: "deepseek",
           },
         });
         const spoken = stepsToSpeech(out.steps ?? []);

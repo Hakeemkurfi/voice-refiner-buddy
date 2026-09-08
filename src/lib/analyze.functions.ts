@@ -5,6 +5,9 @@ const Input = z.object({
   image_b64: z.string().min(0).optional(),
   burst_id: z.string().uuid().optional(),
   contextText: z.string().max(12000).optional(),
+  question: z.string().max(2000).optional(),
+  course: z.string().max(120).optional().nullable(),
+  useResources: z.boolean().optional(),
   model: z.enum(["flash", "pro", "auto", "deepseek"]).optional(),
 });
 
@@ -14,6 +17,15 @@ type Parsed = {
   steps?: string[];
   extractedText?: string;
   confidence?: number;
+};
+
+type SourceRef = {
+  title: string;
+  course: string | null;
+  section: string | null;
+  page: number | null;
+  similarity: number;
+  excerpt: string;
 };
 
 // ─── System prompt (dictation-friendly tutor) ────────────────────────────────

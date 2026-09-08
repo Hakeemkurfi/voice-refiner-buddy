@@ -639,6 +639,18 @@ export const analyzeImage = createServerFn({ method: "POST" })
       }
     }
 
+    // Fallback providers also get resource context when a question is supplied.
+    let fallbackSources: SourceRef[] = [];
+    if (data.question?.trim()) {
+      const { block, sources } = await retrieveContext(data.question.trim());
+      if (block) {
+        const extra = `\n\nCOURSE RESOURCE EXTRACTS (reference only):\n${block}`;
+        flashPayload.contextText = `${flashPayload.contextText ?? ""}${extra}`.slice(0, 12000);
+        proPayload.contextText = flashPayload.contextText;
+        fallbackSources = sources;
+      }
+    }
+
 
     if (mode === "flash") {
       const { parsed, provider } = await callWithFallback("flash", flashPayload, geminiKey, lovableKey);

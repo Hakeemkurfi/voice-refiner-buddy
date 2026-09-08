@@ -2,7 +2,22 @@
 // UPLOAD → PARSE → CHUNK → EMBED → INDEX → RETRIEVE → CONTEXT
 // This module knows nothing about DeepSeek/Gemini. It only produces context.
 
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { createClient } from "@supabase/supabase-js";
+
+// Own service-role client (the shared proxy client does not survive some
+// method calls in the worker runtime).
+let _db: ReturnType<typeof createClient> | undefined;
+function db() {
+  if (!_db) {
+    const url = process.env["SUPABASE_URL"];
+    const key = process.env["SUPABASE_SERVICE_ROLE_KEY"];
+    if (!url || !key) throw new Error("Database is not configured for the resource library.");
+    _db = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return _db;
+}
 
 export const EMBEDDING_MODEL = "openai/text-embedding-3-small";
 export const EMBEDDING_DIMS = 1536;
@@ -126,7 +141,7 @@ export async function indexChunks(resourceId: string, chunks: ChunkInput[]) {
   let inserted = 0;
   for (let i = 0; i < rows.length; i += 100) {
     const slice = rows.slice(i, i + 100);
-    const { error } = await supabaseAdmin.from("resource_chunks").insert(slice as never);
+    const { error } = await db().from("resource_chunks").insert(slice as never);
     if (error) throw new Error(`Indexing failed: ${error.message}`);
     inserted += slice.length;
   }
@@ -146,7 +161,7 @@ export async function retrieveChunks(
   // 1. Semantic search
   const embedded = await embedTexts([q]);
   if (embedded?.[0]) {
-    const rpc = supabaseAdmin.rpc as unknown as (
+    const rpc = db().rpc as unknown as (
       fn: string,
       args: Record<string, unknown>,
     ) => Promise<{ data: RetrievedChunk[] | null; error: { message: string } | null }>;

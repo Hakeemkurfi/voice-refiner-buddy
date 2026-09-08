@@ -545,46 +545,100 @@ export const analyzeImage = createServerFn({ method: "POST" })
       throw new Error("No image provided (need image_b64 or burst_id)");
     }
 
-    const mode = data.model ?? "auto";
+    // DeepSeek is the PRIMARY provider. Gemini / Lovable AI stay as fallbacks.
+    const mode = data.model ?? "deepseek";
 
     // ── COST SAVER: Flash uses ONLY the sharpest single frame ──
     // Multi-frame is reserved for Pro escalation when Flash result is weak.
     const flashPayload = { images_b64: images_b64.slice(0, 1), contextText: data.contextText };
     const proPayload = { images_b64: images_b64.slice(0, 3), contextText: data.contextText };
 
-    // ── DEEPSEEK BRANCH ───────────────────────────────────────────────────────
-    // DeepSeek is text-only and cannot read images. So we first use Gemini for
-    // OCR only (fast + cheap), then DeepSeek solves & produces the dictation.
-    // This uses your paid DeepSeek balance instead of Lovable AI credits.
-    if (deepseekKey && geminiKey && mode === "deepseek") {
+    // ── RAG: retrieve course-resource context (never blocks the answer) ───────
+    const retrieveContext = async (seed: string) => {
+      if (data.useResources === false) return { block: "", sources: [] as SourceRef[] };
       try {
-        let ocr = await callGeminiOCR("flash", flashPayload, geminiKey);
-        if (isWeakOCR(ocr)) {
-          const ocrPro = await callGeminiOCR("pro", proPayload, geminiKey);
-          if ((ocrPro.extractedText ?? "").trim().length > (ocr.extractedText ?? "").trim().length) {
-            ocr = ocrPro;
+        const { retrieveChunks, buildContextBlock } = await import("./rag.server");
+        const chunks = await retrieveChunks(seed, { course: data.course ?? null, limit: 6 });
+        return {
+          block: buildContextBlock(chunks),
+          sources: chunks.map((c) => ({
+            title: c.title,
+            course: c.course,
+            section: c.section,
+            page: c.page,
+            similarity: Number(c.similarity.toFixed(3)),
+            excerpt: c.content.slice(0, 240),
+          })),
+        };
+      } catch (e) {
+        console.warn("[rag] retrieval skipped:", (e as Error).message);
+        return { block: "", sources: [] as SourceRef[] };
+      }
+    };
+
+    // ── DEEPSEEK PRIMARY PIPELINE ─────────────────────────────────────────────
+    // VISION (DeepSeek → Gemini OCR fallback) → RAG → DeepSeek reasoning
+    if (deepseekKey && mode !== "flash" && mode !== "pro") {
+      try {
+        const askText =
+          (data.question?.trim()
+            ? `Student question: ${data.question.trim()}\n\n`
+            : "") + "Read this page and extract every word, number and equation.";
+
+        let visionParsed: Parsed | null = null;
+        let visionProvider = "deepseek-vision";
+
+        try {
+          visionParsed = await callDeepSeekVision(
+            flashPayload.images_b64,
+            deepseekKey,
+            OCR_PROMPT,
+            askText,
+          );
+        } catch (visionError) {
+          if (!geminiKey) throw visionError;
+          console.warn("[vision] DeepSeek vision unavailable:", (visionError as Error).message);
+          let ocr = await callGeminiOCR("flash", flashPayload, geminiKey);
+          if (isWeakOCR(ocr)) {
+            const ocrPro = await callGeminiOCR("pro", proPayload, geminiKey);
+            if ((ocrPro.extractedText ?? "").trim().length > (ocr.extractedText ?? "").trim().length) {
+              ocr = ocrPro;
+            }
           }
+          visionParsed = ocr;
+          visionProvider = "gemini-ocr";
         }
+
+        const pageText = (visionParsed.extractedText ?? "").trim();
+        const { block, sources } = await retrieveContext(
+          [data.question ?? "", pageText].filter(Boolean).join("\n").slice(0, 4000),
+        );
+
         const solved = await solveWithDeepSeek(
-          ocr.extractedText ?? "",
+          (data.question?.trim() ? `Student question: ${data.question.trim()}\n\n` : "") + pageText,
           data.contextText,
           deepseekKey,
+          block,
         );
+
         return finalize(
           {
             ...solved,
-            extractedText: ocr.extractedText ?? solved.extractedText ?? "",
-            confidence: typeof solved.confidence === "number" ? solved.confidence : ocr.confidence,
+            extractedText: pageText || solved.extractedText || "",
+            confidence:
+              typeof solved.confidence === "number" ? solved.confidence : visionParsed.confidence,
           },
-          "deepseek-chat",
+          `${visionProvider}+deepseek-chat`,
           false,
           flashPayload.images_b64.length,
+          sources,
         );
       } catch (e) {
-        // If DeepSeek branch fails, fall through to the normal Gemini flow.
-        console.warn("DeepSeek branch failed:", (e as Error).message);
+        // Never fail: fall through to the Gemini / Lovable AI path.
+        console.warn("DeepSeek pipeline failed:", (e as Error).message);
       }
     }
+
 
     if (mode === "flash") {
       const { parsed, provider } = await callWithFallback("flash", flashPayload, geminiKey, lovableKey);

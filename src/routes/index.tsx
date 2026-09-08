@@ -668,10 +668,19 @@ function Index() {
               ESP32-S3-CAM → AI → your earbuds, step by step.
             </p>
           </div>
-          <Badge variant={online ? "default" : "secondary"} className="gap-1">
-            {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
-            {realtimeOnline ? "Live" : serverReachable ? "Polling" : "Offline"}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <a
+              href="/resources"
+              className="rounded-md border border-border px-3 py-1 text-xs hover:bg-muted"
+            >
+              Resources
+            </a>
+            <Badge variant={online ? "default" : "secondary"} className="gap-1">
+              {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+              {realtimeOnline ? "Live" : serverReachable ? "Polling" : "Offline"}
+            </Badge>
+          </div>
+
         </div>
       </header>
 

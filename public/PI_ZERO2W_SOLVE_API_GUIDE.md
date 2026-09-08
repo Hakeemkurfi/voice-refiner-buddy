@@ -127,3 +127,29 @@ curl -s -X POST -H "Content-Type: application/json" \
 Options: `?q=your+question` with a raw JPEG, `?model=pro` for the stronger model,
 `?format=json` to get `{"answer":"..."}` instead of plain text.
 Handle the speech yourself — this endpoint only returns text.
+
+## Course resources (RAG)
+
+Upload your textbooks, lecture notes, lab manuals and formula sheets at
+`https://axondynamics.lovable.app/resources`. Every answer then searches them
+first and follows your course's own notation, formulas and methods when the
+material is relevant. If nothing relevant is found, Axon still answers normally
+from the model's own knowledge — a matching resource is never required.
+
+Extra options on both endpoints:
+
+```bash
+# limit the search to one course
+curl -s -X POST "https://axondynamics.lovable.app/api/public/ask?format=json&course=PHY202" \
+     -H "Content-Type: application/json" \
+     -d '{"prompt":"Solve question 3 the way our notes do"}'
+
+# turn the resource search off for one call
+... /api/public/ask?use_resources=0
+```
+
+With `?format=json` the reply also carries `sources` — the document, section and
+page that contributed to the answer.
+
+DeepSeek is the primary provider for both vision and reasoning; Gemini is only a
+fallback if DeepSeek is unavailable.

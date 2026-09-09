@@ -17,10 +17,10 @@ echo "server: $BASE"
 echo "-- installing packages (needs your sudo password once)"
 sudo apt-get update -qq
 sudo apt-get install -y --no-install-recommends \
-  python3 python3-requests python3-evdev \
+  python3 python3-requests python3-evdev python3-pil \
   mpg123 espeak-ng \
   rpicam-apps 2>/dev/null || sudo apt-get install -y --no-install-recommends \
-  python3 python3-requests python3-evdev mpg123 espeak-ng libcamera-apps
+  python3 python3-requests python3-evdev python3-pil mpg123 espeak-ng libcamera-apps
 
 mkdir -p "$DIR"
 echo "-- downloading client"

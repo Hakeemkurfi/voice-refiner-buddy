@@ -64,7 +64,30 @@ def capture() -> Path:
     return SHOT
 
 
-def ask(image: Path | None, prompt: str | None = None) -> dict:
+def shrink(image: Path, max_side: int = 1800, quality: int = 82) -> bytes:
+    """Downscale before upload: 3 MB over a weak hotspot is what kills the TLS
+    connection mid-request. ~400-800 KB is still perfectly readable."""
+    raw = image.read_bytes()
+    try:
+        from PIL import Image  # type: ignore
+        import io
+        im = Image.open(io.BytesIO(raw))
+        im = im.convert("RGB")
+        w, h = im.size
+        if max(w, h) > max_side:
+            scale = max_side / max(w, h)
+            im = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, "JPEG", quality=quality, optimize=True)
+        out = buf.getvalue()
+        log(f"image {len(raw)//1024} KB -> {len(out)//1024} KB")
+        return out
+    except Exception as e:
+        log(f"resize skipped ({e}); sending original")
+        return raw
+
+
+def ask(image: Path | None, prompt: str | None = None, attempts: int = 4) -> dict:
     params = {"format": "json"}
     if COURSE:
         params["course"] = COURSE
@@ -72,10 +95,23 @@ def ask(image: Path | None, prompt: str | None = None) -> dict:
                      "model": "deepseek"}
     if image is not None:
         import base64
-        payload["image_b64"] = base64.b64encode(image.read_bytes()).decode()
-    r = requests.post(f"{BASE}/api/public/ask", params=params, json=payload, timeout=180)
-    r.raise_for_status()
-    return r.json()
+        payload["image_b64"] = base64.b64encode(shrink(image)).decode()
+
+    last: Exception | None = None
+    for i in range(1, attempts + 1):
+        try:
+            r = requests.post(f"{BASE}/api/public/ask", params=params, json=payload,
+                              timeout=(15, 240),
+                              headers={"Connection": "close"})
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:  # DNS hiccup, TLS EOF, timeout -> wait and retry
+            last = e
+            log(f"send attempt {i}/{attempts} failed: {str(e)[:120]}")
+            if i < attempts:
+                time.sleep(min(2 ** i, 12))
+    raise last if last else RuntimeError("upload failed")
+
 
 
 def _speak_one(text: str) -> None:

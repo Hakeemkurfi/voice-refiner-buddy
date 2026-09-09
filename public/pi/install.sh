@@ -39,6 +39,10 @@ AXON_VOICE=sage
 AXON_SPEED=0.95
 AXON_WIDTH=2328
 AXON_HEIGHT=1748
+# Upload resize tunables: keep detail for text/math/graphs
+# AXON_MAX_SIDE=3000     # longest edge of the upload copy (px)
+# AXON_QUALITY=90        # JPEG quality of upload copy
+# AXON_TARGET_KB=1200    # try to stay under this size (adaptive fallback)
 EOF
 fi
 

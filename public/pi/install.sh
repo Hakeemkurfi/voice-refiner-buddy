@@ -24,6 +24,9 @@ sudo apt-get install -y --no-install-recommends \
 
 mkdir -p "$DIR"
 echo "-- downloading client"
+if [ -f "$DIR/axon.py" ]; then
+  cp "$DIR/axon.py" "$DIR/axon.py.bak.$(date +%Y%m%d%H%M%S)"
+fi
 curl -fsSL "$BASE/pi/axon.py" -o "$DIR/axon.py"
 chmod +x "$DIR/axon.py"
 
@@ -36,6 +39,10 @@ AXON_VOICE=sage
 AXON_SPEED=0.95
 AXON_WIDTH=2328
 AXON_HEIGHT=1748
+# Upload resize tunables: keep detail for text/math/graphs
+# AXON_MAX_SIDE=3000     # longest edge of the upload copy (px)
+# AXON_QUALITY=90        # JPEG quality of upload copy
+# AXON_TARGET_KB=1200    # try to stay under this size (adaptive fallback)
 EOF
 fi
 
@@ -43,6 +50,10 @@ fi
 sudo usermod -aG input,video,audio "$USER" || true
 
 echo "-- installing service (axon.service)"
+if [ -f /etc/systemd/system/axon.service ]; then
+  sudo cp /etc/systemd/system/axon.service \
+    "$DIR/axon.service.bak.$(date +%Y%m%d%H%M%S)"
+fi
 sudo tee /etc/systemd/system/axon.service >/dev/null <<EOF
 [Unit]
 Description=Axon AI Reader

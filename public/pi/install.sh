@@ -50,6 +50,10 @@ fi
 sudo usermod -aG input,video,audio "$USER" || true
 
 echo "-- installing service (axon.service)"
+if [ -f /etc/systemd/system/axon.service ]; then
+  sudo cp /etc/systemd/system/axon.service \
+    "$DIR/axon.service.bak.$(date +%Y%m%d%H%M%S)"
+fi
 sudo tee /etc/systemd/system/axon.service >/dev/null <<EOF
 [Unit]
 Description=Axon AI Reader

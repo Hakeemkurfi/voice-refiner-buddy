@@ -67,23 +67,53 @@ def capture() -> Path:
     return SHOT
 
 
-def shrink(image: Path, max_side: int = 1800, quality: int = 82) -> bytes:
-    """Downscale before upload: 3 MB over a weak hotspot is what kills the TLS
-    connection mid-request. ~400-800 KB is still perfectly readable."""
+def shrink(image: Path,
+           max_side: int = MAX_SIDE,
+           quality: int = JPEG_QUALITY,
+           target_kb: int = TARGET_KB) -> bytes:
+    """Resize/compress the captured JPEG before upload.
+
+    Keeps the original file on disk; only the upload copy is touched.
+    Defaults are chosen to preserve printed text, handwriting, math and
+    small graphs: long side 3000 px, JPEG quality 90, target ~1.2 MB.
+    If the image is still too large, it falls back to progressively
+    smaller dimensions/quality instead of crushing it immediately.
+    """
     raw = image.read_bytes()
+    original_kb = len(raw) // 1024
     try:
         from PIL import Image  # type: ignore
         import io
         im = Image.open(io.BytesIO(raw))
         im = im.convert("RGB")
         w, h = im.size
-        if max(w, h) > max_side:
-            scale = max_side / max(w, h)
-            im = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
-        buf = io.BytesIO()
-        im.save(buf, "JPEG", quality=quality, optimize=True)
-        out = buf.getvalue()
-        log(f"image {len(raw)//1024} KB -> {len(out)//1024} KB")
+
+        # If the original is already small enough, send it unchanged.
+        if original_kb <= target_kb and max(w, h) <= max_side:
+            log(f"image {original_kb} KB {w}x{h} -> sending original")
+            return raw
+
+        # Try: full resolution at quality 90, then 80% size at quality 85,
+        # then 60% size at quality 80. Stop as soon as we're under target.
+        candidates = [
+            (max_side, quality),
+            (int(max_side * 0.8), max(82, quality - 5)),
+            (int(max_side * 0.6), max(78, quality - 10)),
+        ]
+        for cand_max, cand_q in candidates:
+            im_out = im
+            if max(w, h) > cand_max:
+                scale = cand_max / max(w, h)
+                im_out = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            buf = io.BytesIO()
+            im_out.save(buf, "JPEG", quality=cand_q, optimize=True)
+            out = buf.getvalue()
+            out_kb = len(out) // 1024
+            log(f"image {original_kb} KB {w}x{h} -> {out_kb} KB "
+                f"{im_out.width}x{im_out.height} (q={cand_q})")
+            if out_kb <= target_kb:
+                return out
+        # If every attempt is still over target, return the smallest one.
         return out
     except Exception as e:
         log(f"resize skipped ({e}); sending original")

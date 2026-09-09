@@ -24,6 +24,9 @@ sudo apt-get install -y --no-install-recommends \
 
 mkdir -p "$DIR"
 echo "-- downloading client"
+if [ -f "$DIR/axon.py" ]; then
+  cp "$DIR/axon.py" "$DIR/axon.py.bak.$(date +%Y%m%d%H%M%S)"
+fi
 curl -fsSL "$BASE/pi/axon.py" -o "$DIR/axon.py"
 chmod +x "$DIR/axon.py"
 

@@ -50,14 +50,14 @@ export const Route = createFileRoute("/api/public/tts")({
           const voice = body.voice ?? "sage";
           const speed = Math.min(1.5, Math.max(0.5, Number(body.speed) || 0.9));
 
-          const res = await fetch("https://ai.gateway.lovable.dev/v1/audio/speech", {
+          const res = await fetch(endpoint, {
             method: "POST",
             headers: {
               Authorization: `Bearer ${key}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "openai/gpt-4o-mini-tts",
+              model,
               input: text,
               voice,
               speed,

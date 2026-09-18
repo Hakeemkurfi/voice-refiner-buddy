@@ -237,8 +237,8 @@ def speak(text: str) -> None:
         for piece in _sentences(text):
             _speak_one(piece)
     except Exception as e:  # offline / TTS down -> local voice
-        log(f"cloud speech failed ({e}); using local voice")
-        subprocess.run(["espeak-ng", "-s", "150", text[:2000]], check=False)
+        log(f"cloud speech failed ({e}); using device voice")
+        _speak_local(text)
 
 
 

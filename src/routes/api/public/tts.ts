@@ -19,10 +19,19 @@ export const Route = createFileRoute("/api/public/tts")({
 
       POST: async ({ request }) => {
         try {
-          const key = process.env.LOVABLE_API_KEY;
+          // Prefer the user's OWN OpenAI account when a key is configured:
+          // billed to them directly, no Lovable credits involved. Falls back
+          // to the Lovable AI Gateway only when no own key exists.
+          const ownKey = process.env.OPENAI_API_KEY;
+          const gatewayKey = process.env.LOVABLE_API_KEY;
+          const key = ownKey || gatewayKey;
+          const endpoint = ownKey
+            ? "https://api.openai.com/v1/audio/speech"
+            : "https://ai.gateway.lovable.dev/v1/audio/speech";
+          const model = ownKey ? "gpt-4o-mini-tts" : "openai/gpt-4o-mini-tts";
           if (!key) {
             return new Response(
-              JSON.stringify({ error: "Missing LOVABLE_API_KEY" }),
+              JSON.stringify({ error: "No TTS credentials configured" }),
               { status: 500, headers: { "Content-Type": "application/json", ...CORS } },
             );
           }
@@ -41,14 +50,14 @@ export const Route = createFileRoute("/api/public/tts")({
           const voice = body.voice ?? "sage";
           const speed = Math.min(1.5, Math.max(0.5, Number(body.speed) || 0.9));
 
-          const res = await fetch("https://ai.gateway.lovable.dev/v1/audio/speech", {
+          const res = await fetch(endpoint, {
             method: "POST",
             headers: {
               Authorization: `Bearer ${key}`,
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              model: "openai/gpt-4o-mini-tts",
+              model,
               input: text,
               voice,
               speed,
@@ -62,8 +71,19 @@ export const Route = createFileRoute("/api/public/tts")({
           });
           if (!res.ok) {
             const txt = await res.text().catch(() => "");
+            // 402 = the hosted voice allowance is exhausted. Tell the client
+            // plainly so it switches to the on-device voice instead of dying.
+            const hint =
+              res.status === 402
+                ? "Hosted voice unavailable (no credit). Use the device voice, or configure your own OpenAI key on the server."
+                : undefined;
             return new Response(
-              JSON.stringify({ error: `TTS ${res.status}`, detail: txt.slice(0, 300) }),
+              JSON.stringify({
+                error: `TTS ${res.status}`,
+                fallback: "local",
+                hint,
+                detail: txt.slice(0, 300),
+              }),
               { status: res.status, headers: { "Content-Type": "application/json", ...CORS } },
             );
           }

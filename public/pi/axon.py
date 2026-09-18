@@ -147,11 +147,59 @@ def ask(image: Path | None, prompt: str | None = None, attempts: int = 4) -> dic
 
 
 
+def _have(exe: str) -> bool:
+    return subprocess.run(["which", exe], capture_output=True).returncode == 0
+
+
+# TTS mode: "auto" (try cloud, drop to device voice on failure),
+# "cloud" (cloud only) or "local" (never call the cloud -> zero cost).
+TTS_MODE = os.environ.get("AXON_TTS", "auto").strip().lower()
+PIPER_MODEL = os.environ.get("AXON_PIPER_MODEL",
+                             str(Path.home() / "axon" / "voice.onnx"))
+_cloud_ok = TTS_MODE != "local"
+
+
+def _speak_local(text: str) -> None:
+    """Speak on the Pi itself. Free, offline, no account of any kind.
+
+    Uses piper (natural sounding) when a voice model is present, otherwise
+    espeak-ng which is always installed.
+    """
+    if _have("piper") and Path(PIPER_MODEL).exists():
+        piper = subprocess.Popen(
+            ["piper", "--model", PIPER_MODEL, "--output_raw"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        play = subprocess.Popen(
+            ["aplay", "-q", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"],
+            stdin=piper.stdout)
+        try:
+            piper.stdin.write(text.encode())
+        finally:
+            for proc in (piper.stdin,):
+                try:
+                    proc.close()
+                except Exception:
+                    pass
+            piper.wait()
+            play.wait()
+        return
+    subprocess.run(["espeak-ng", "-s", "150", text[:2000]], check=False)
+
+
 def _speak_one(text: str) -> None:
     """Stream MP3 bytes straight into mpg123 so sound starts almost at once."""
+    global _cloud_ok
+    if not _cloud_ok:
+        return _speak_local(text)
     r = requests.post(f"{BASE}/api/public/tts",
                       json={"text": text[:3500], "voice": VOICE, "speed": float(SPEED)},
                       timeout=180, stream=True)
+    if r.status_code in (401, 402, 403, 404, 429):
+        # No hosted voice available (e.g. credit exhausted). Stop asking for
+        # the rest of this session and keep working with the device voice.
+        _cloud_ok = False
+        log(f"hosted voice unavailable ({r.status_code}); using device voice from now on")
+        return _speak_local(text)
     r.raise_for_status()
     p = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
     try:
@@ -189,8 +237,8 @@ def speak(text: str) -> None:
         for piece in _sentences(text):
             _speak_one(piece)
     except Exception as e:  # offline / TTS down -> local voice
-        log(f"cloud speech failed ({e}); using local voice")
-        subprocess.run(["espeak-ng", "-s", "150", text[:2000]], check=False)
+        log(f"cloud speech failed ({e}); using device voice")
+        _speak_local(text)
 
 
 

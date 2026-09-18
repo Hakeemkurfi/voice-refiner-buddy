@@ -37,6 +37,12 @@ AXON_BASE=$BASE
 # AXON_COURSE=PHY202     # limit answers to one course's material
 AXON_VOICE=sage
 AXON_SPEED=0.95
+# Voice source: auto = try the hosted voice, fall back to the Pi's own voice
+#               local = always speak on the Pi (completely free, offline)
+#               cloud = hosted voice only
+AXON_TTS=auto
+# Optional nicer offline voice: install piper and put a model here
+# AXON_PIPER_MODEL=$HOME/axon/voice.onnx
 AXON_WIDTH=2328
 AXON_HEIGHT=1748
 # Upload resize tunables: keep detail for text/math/graphs

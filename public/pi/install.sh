@@ -42,7 +42,7 @@ AXON_SPEED=0.95
 #               cloud = hosted voice only
 AXON_TTS=auto
 # Natural offline voice (free, no credits, no account):
-# Natural offline voice: curl -fsSL https://axondynamics.lovable.app/pi/voice.sh | bash
+#   curl -fsSL https://axondynamics.lovable.app/pi/voice.sh | bash
 AXON_WIDTH=2328
 AXON_HEIGHT=1748
 # Upload resize tunables: keep detail for text/math/graphs

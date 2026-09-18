@@ -19,10 +19,19 @@ export const Route = createFileRoute("/api/public/tts")({
 
       POST: async ({ request }) => {
         try {
-          const key = process.env.LOVABLE_API_KEY;
+          // Prefer the user's OWN OpenAI account when a key is configured:
+          // billed to them directly, no Lovable credits involved. Falls back
+          // to the Lovable AI Gateway only when no own key exists.
+          const ownKey = process.env.OPENAI_API_KEY;
+          const gatewayKey = process.env.LOVABLE_API_KEY;
+          const key = ownKey || gatewayKey;
+          const endpoint = ownKey
+            ? "https://api.openai.com/v1/audio/speech"
+            : "https://ai.gateway.lovable.dev/v1/audio/speech";
+          const model = ownKey ? "gpt-4o-mini-tts" : "openai/gpt-4o-mini-tts";
           if (!key) {
             return new Response(
-              JSON.stringify({ error: "Missing LOVABLE_API_KEY" }),
+              JSON.stringify({ error: "No TTS credentials configured" }),
               { status: 500, headers: { "Content-Type": "application/json", ...CORS } },
             );
           }

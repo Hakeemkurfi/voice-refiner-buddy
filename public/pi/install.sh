@@ -42,7 +42,7 @@ AXON_SPEED=0.95
 #               cloud = hosted voice only
 AXON_TTS=auto
 # Optional nicer offline voice: install piper and put a model here
-# AXON_PIPER_MODEL=$HOME/axon/voice.onnx
+# Natural offline voice: curl -fsSL /pi/voice.sh | bash
 AXON_WIDTH=2328
 AXON_HEIGHT=1748
 # Upload resize tunables: keep detail for text/math/graphs

@@ -156,18 +156,27 @@ def _have(exe: str) -> bool:
 TTS_MODE = os.environ.get("AXON_TTS", "auto").strip().lower()
 PIPER_MODEL = os.environ.get("AXON_PIPER_MODEL",
                              str(Path.home() / "axon" / "voice.onnx"))
+PIPER_BIN = os.environ.get("AXON_PIPER",
+                           str(Path.home() / "axon" / "piper" / "piper" / "piper"))
 _cloud_ok = TTS_MODE != "local"
+
+
+def _piper() -> str | None:
+    if Path(PIPER_BIN).exists():
+        return PIPER_BIN
+    return "piper" if _have("piper") else None
 
 
 def _speak_local(text: str) -> None:
     """Speak on the Pi itself. Free, offline, no account of any kind.
 
-    Uses piper (natural sounding) when a voice model is present, otherwise
-    espeak-ng which is always installed.
+    Uses piper (natural neural voice, installed by /pi/voice.sh) when a voice
+    model is present, otherwise espeak-ng which is always installed.
     """
-    if _have("piper") and Path(PIPER_MODEL).exists():
+    exe = _piper()
+    if exe and Path(PIPER_MODEL).exists():
         piper = subprocess.Popen(
-            ["piper", "--model", PIPER_MODEL, "--output_raw"],
+            [exe, "--model", PIPER_MODEL, "--output_raw"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         play = subprocess.Popen(
             ["aplay", "-q", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"],
@@ -183,7 +192,10 @@ def _speak_local(text: str) -> None:
             piper.wait()
             play.wait()
         return
-    subprocess.run(["espeak-ng", "-s", "150", text[:2000]], check=False)
+    # Basic voice: slower, softer pitch and a gap between words so each
+    # dictated step is easy to write down.
+    subprocess.run(["espeak-ng", "-v", "en-us+f3", "-s", "135", "-p", "42",
+                    "-g", "6", text[:2000]], check=False)
 
 
 def _speak_one(text: str) -> None:

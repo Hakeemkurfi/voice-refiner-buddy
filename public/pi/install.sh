@@ -41,7 +41,7 @@ AXON_SPEED=0.95
 #               local = always speak on the Pi (completely free, offline)
 #               cloud = hosted voice only
 AXON_TTS=auto
-# Optional nicer offline voice: install piper and put a model here
+# Natural offline voice (free, no credits, no account):
 # Natural offline voice: curl -fsSL https://axondynamics.lovable.app/pi/voice.sh | bash
 AXON_WIDTH=2328
 AXON_HEIGHT=1748

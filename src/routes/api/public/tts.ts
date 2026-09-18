@@ -71,8 +71,19 @@ export const Route = createFileRoute("/api/public/tts")({
           });
           if (!res.ok) {
             const txt = await res.text().catch(() => "");
+            // 402 = the hosted voice allowance is exhausted. Tell the client
+            // plainly so it switches to the on-device voice instead of dying.
+            const hint =
+              res.status === 402
+                ? "Hosted voice unavailable (no credit). Use the device voice, or configure your own OpenAI key on the server."
+                : undefined;
             return new Response(
-              JSON.stringify({ error: `TTS ${res.status}`, detail: txt.slice(0, 300) }),
+              JSON.stringify({
+                error: `TTS ${res.status}`,
+                fallback: "local",
+                hint,
+                detail: txt.slice(0, 300),
+              }),
               { status: res.status, headers: { "Content-Type": "application/json", ...CORS } },
             );
           }

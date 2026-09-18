@@ -192,7 +192,10 @@ def _speak_local(text: str) -> None:
             piper.wait()
             play.wait()
         return
-    subprocess.run(["espeak-ng", "-s", "150", text[:2000]], check=False)
+    # Basic voice: slower, softer pitch and a gap between words so each
+    # dictated step is easy to write down.
+    subprocess.run(["espeak-ng", "-v", "en-us+f3", "-s", "135", "-p", "42",
+                    "-g", "6", text[:2000]], check=False)
 
 
 def _speak_one(text: str) -> None:

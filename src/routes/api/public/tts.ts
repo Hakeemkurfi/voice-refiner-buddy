@@ -241,7 +241,7 @@ export const Route = createFileRoute("/api/public/tts")({
           }
 
           // 1. Tencent Cloud first (your account, no Lovable credits).
-          const tencent = await tencentTts(text, body.voice, body.speed);
+          const tencent = await tencentTts(text, body.voice, body.speed ?? 0.9);
           if (tencent.ok) {
             return new Response(tencent.audio, {
               status: 200,

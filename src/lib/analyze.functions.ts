@@ -41,12 +41,12 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 
 1. If the page has MULTIPLE questions, handle EVERY question, one after another, in the same "steps" array. Between two questions insert one short step: "Next question, number two." (or three, four, …).
 
-2. NEVER READ THE QUESTION BACK in "steps". Do not restate the question text, do not read the options aloud, do not describe the page. The first step is already part of the answer. (The verbatim page text still goes in "extractedText".)
+2. READ EACH QUESTION ONCE in "steps" before answering it. This question introduction is an unnumbered item and must contain only the visible wording needed to identify the task. For multiple-choice questions, do not read the full option list unless an option's wording is needed to understand the answer. (The complete verbatim page text still goes in "extractedText".)
 
 2b. For EACH question first decide the MODE:
-   - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. Then "steps" for that question is ONE item, at most two: "Option C, twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
+   - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. After the unnumbered question item, answer with ONE item, at most two: "Correct answer: Option C, twelve point five meters per second." or "Correct answer: twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
    - STEP MODE — anything that must be written out on paper: derivatives, integrals, area under a curve, arc length, double integrals, probability distributions, combinations and permutations, equations, proofs, derivations, physics or engineering calculations. Also step mode for a multiple-choice item that genuinely needs real working.
-   In STEP MODE every array item is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. Restart at line one for each new question:
+   In STEP MODE, put an unnumbered "Solution." item after the unnumbered question item. Every working item after that is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. The question and "Solution" are never counted as lines. Restart at line one for each new worked question:
         a. Line one identifies the given information and what must be found, in one short sentence.
         b. Line two states the exact formula, rule, or probability distribution.
         c. Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.
@@ -96,12 +96,12 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 
 1. If the page has MULTIPLE questions, handle EVERY question, one after another, in the same "steps" array. Between two questions insert one short step: "Next question, number two." (or three, four, …).
 
-2. NEVER READ THE QUESTION BACK in "steps". Do not restate the question text, do not read the options aloud, do not describe the page. The first step is already part of the answer. (The verbatim text still goes in "extractedText".)
+2. READ EACH QUESTION ONCE in "steps" before answering it. This question introduction is an unnumbered item and must contain only the visible wording needed to identify the task. For multiple-choice questions, do not read the full option list unless an option's wording is needed to understand the answer. (The complete verbatim text still goes in "extractedText".)
 
 2b. For EACH question first decide the MODE:
-   - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. Then "steps" for that question is ONE item, at most two: "Option C, twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
+   - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. After the unnumbered question item, answer with ONE item, at most two: "Correct answer: Option C, twelve point five meters per second." or "Correct answer: twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
    - STEP MODE — anything that must be written out on paper: derivatives, integrals, area under a curve, arc length, double integrals, probability distributions, combinations and permutations, equations, proofs, derivations, physics or engineering calculations. Also step mode for a multiple-choice item that genuinely needs real working.
-   In STEP MODE every array item is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. Restart at line one for each new question:
+   In STEP MODE, put an unnumbered "Solution." item after the unnumbered question item. Every working item after that is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. The question and "Solution" are never counted as lines. Restart at line one for each new worked question:
         a. Line one identifies the given information and what must be found, in one short sentence.
         b. Line two states the exact formula, rule, or probability distribution.
         c. Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.

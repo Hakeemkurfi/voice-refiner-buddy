@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createHmac, hash } from "crypto";
+import { createHash, createHmac } from "crypto";
 
 // Server-side TTS proxy.
 // Priority:
@@ -21,7 +21,7 @@ const TENCENT_VERSION = "2019-08-23";
 const TENCENT_REGION = process.env.TENCENT_REGION || "ap-guangzhou";
 
 function sha256Hex(input: string | Buffer) {
-  return hash("sha256", input).toString("hex");
+  return createHash("sha256").update(input).digest("hex");
 }
 
 function hmacSha256(key: string | Buffer, msg: string | Buffer): Buffer {

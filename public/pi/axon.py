@@ -28,9 +28,9 @@ VOICE = os.environ.get("AXON_VOICE", "sage")
 SPEED = os.environ.get("AXON_SPEED", "0.95")
 WIDTH = os.environ.get("AXON_WIDTH", "2328")
 HEIGHT = os.environ.get("AXON_HEIGHT", "1748")
-MAX_SIDE = int(os.environ.get("AXON_MAX_SIDE", "3000"))
-JPEG_QUALITY = int(os.environ.get("AXON_QUALITY", "90"))
-TARGET_KB = int(os.environ.get("AXON_TARGET_KB", "1200"))
+MAX_SIDE = int(os.environ.get("AXON_MAX_SIDE", "2400"))
+JPEG_QUALITY = int(os.environ.get("AXON_QUALITY", "87"))
+TARGET_KB = int(os.environ.get("AXON_TARGET_KB", "450"))
 SHOT = Path("/tmp/axon-page.jpg")
 LOG = Path.home() / "axon" / "axon.log"
 

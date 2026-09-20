@@ -41,17 +41,17 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 
 1. If the page has MULTIPLE questions, handle EVERY question, one after another, in the same "steps" array. Between two questions insert one short step: "Next question, number two." (or three, four, …).
 
-2. For EACH question follow this exact spoken structure. Every array item is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. Restart at line one for each new question:
-   a. Line one identifies the given information and what must be found, in one short sentence.
-   b. If MULTIPLE CHOICE (options A/B/C/D/E visible):
-        - Line two states the exact formula or principle.
-        - Following lines substitute the values, simplify, calculate, and match the result to an option.
-        - Final numbered line: "Therefore, option <letter> is correct."
-   c. If COMPUTATIONAL / show-that / derive (no options):
-        - Line two states the exact formula, rule, or probability distribution.
-        - Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.
-        - Add a short check only when it usefully checks units, magnitude, or a probability from zero to one.
-        - Final numbered line: "Therefore, <quantity> equals <number> <unit>."
+2. NEVER READ THE QUESTION BACK in "steps". Do not restate the question text, do not read the options aloud, do not describe the page. The first step is already part of the answer. (The verbatim page text still goes in "extractedText".)
+
+2b. For EACH question first decide the MODE:
+   - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. Then "steps" for that question is ONE item, at most two: "Option C, twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
+   - STEP MODE — anything that must be written out on paper: derivatives, integrals, area under a curve, arc length, double integrals, probability distributions, combinations and permutations, equations, proofs, derivations, physics or engineering calculations. Also step mode for a multiple-choice item that genuinely needs real working.
+   In STEP MODE every array item is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. Restart at line one for each new question:
+        a. Line one identifies the given information and what must be found, in one short sentence.
+        b. Line two states the exact formula, rule, or probability distribution.
+        c. Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.
+        d. Add a short check only when it usefully checks units, magnitude, or a probability from zero to one.
+        e. Final numbered line: "Therefore, <quantity> equals <number> <unit>." — or "Therefore, option <letter> is correct." for a multiple-choice item.
 
 3. COMPLETENESS RULES. Never omit a line whose omission could make a handwritten solution lose marks:
    - Area under a curve, arc length, and single or double integrals: state the integrand and all bounds, show the antiderivative or changed bounds, substitute the bounds, then evaluate.
@@ -96,17 +96,17 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 
 1. If the page has MULTIPLE questions, handle EVERY question, one after another, in the same "steps" array. Between two questions insert one short step: "Next question, number two." (or three, four, …).
 
-2. For EACH question follow this exact spoken structure. Every array item is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. Restart at line one for each new question:
-   a. Line one identifies the given information and what must be found, in one short sentence.
-   b. If MULTIPLE CHOICE (options A/B/C/D/E visible):
-        - Line two states the exact formula or principle.
-        - Following lines substitute the values, simplify, calculate, and match the result to an option.
-        - Final numbered line: "Therefore, option <letter> is correct."
-   c. If COMPUTATIONAL / show-that / derive (no options):
-        - Line two states the exact formula, rule, or probability distribution.
-        - Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.
-        - Add a short check only when it usefully checks units, magnitude, or a probability from zero to one.
-        - Final numbered line: "Therefore, <quantity> equals <number> <unit>."
+2. NEVER READ THE QUESTION BACK in "steps". Do not restate the question text, do not read the options aloud, do not describe the page. The first step is already part of the answer. (The verbatim text still goes in "extractedText".)
+
+2b. For EACH question first decide the MODE:
+   - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. Then "steps" for that question is ONE item, at most two: "Option C, twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
+   - STEP MODE — anything that must be written out on paper: derivatives, integrals, area under a curve, arc length, double integrals, probability distributions, combinations and permutations, equations, proofs, derivations, physics or engineering calculations. Also step mode for a multiple-choice item that genuinely needs real working.
+   In STEP MODE every array item is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. Restart at line one for each new question:
+        a. Line one identifies the given information and what must be found, in one short sentence.
+        b. Line two states the exact formula, rule, or probability distribution.
+        c. Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.
+        d. Add a short check only when it usefully checks units, magnitude, or a probability from zero to one.
+        e. Final numbered line: "Therefore, <quantity> equals <number> <unit>." — or "Therefore, option <letter> is correct." for a multiple-choice item.
 
 3. COMPLETENESS RULES. Never omit a line whose omission could make a handwritten solution lose marks:
    - Area under a curve, arc length, and single or double integrals: state the integrand and all bounds, show the antiderivative or changed bounds, substitute the bounds, then evaluate.

@@ -1,12 +1,11 @@
 import { useRouter } from "@tanstack/react-router";
+import type { ErrorComponentProps } from "@tanstack/react-router";
 
 export default function DefaultErrorComponent({
   error,
   reset,
-}: {
-  error: Error;
-  reset: () => void;
-}) {
+}: ErrorComponentProps) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
   const router = useRouter();
 
   return (

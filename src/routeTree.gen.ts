@@ -9,20 +9,20 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as ResourcesRouteImport } from './routes/resources'
-import { Route as HakeemneurotechRouteImport } from './routes/hakeemneurotech'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
-import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
-import { Route as ApiPublicSolveRouteImport } from './routes/api/public/solve'
-import { Route as ApiPublicNeuroRouteImport } from './routes/api/public/neuro'
-import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
+import { Route as HakeemneurotechRouteImport } from './routes/hakeemneurotech'
+import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as ApiPublicAskRouteImport } from './routes/api/public/ask'
+import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
+import { Route as ApiPublicNeuroRouteImport } from './routes/api/public/neuro'
+import { Route as ApiPublicSolveRouteImport } from './routes/api/public/solve'
+import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
+import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
 import { Route as ApiPublicBurstFinalizeRouteImport } from './routes/api/public/burst.finalize'
 
-const ResourcesRoute = ResourcesRouteImport.update({
-  id: '/resources',
-  path: '/resources',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HakeemneurotechRoute = HakeemneurotechRouteImport.update({
@@ -30,29 +30,14 @@ const HakeemneurotechRoute = HakeemneurotechRouteImport.update({
   path: '/hakeemneurotech',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ResourcesRoute = ResourcesRouteImport.update({
+  id: '/resources',
+  path: '/resources',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicTtsRoute = ApiPublicTtsRouteImport.update({
-  id: '/api/public/tts',
-  path: '/api/public/tts',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiPublicTriggerRoute = ApiPublicTriggerRouteImport.update({
-  id: '/api/public/trigger',
-  path: '/api/public/trigger',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiPublicSolveRoute = ApiPublicSolveRouteImport.update({
-  id: '/api/public/solve',
-  path: '/api/public/solve',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiPublicNeuroRoute = ApiPublicNeuroRouteImport.update({
-  id: '/api/public/neuro',
-  path: '/api/public/neuro',
+const ApiPublicAskRoute = ApiPublicAskRouteImport.update({
+  id: '/api/public/ask',
+  path: '/api/public/ask',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicEventRoute = ApiPublicEventRouteImport.update({
@@ -60,9 +45,24 @@ const ApiPublicEventRoute = ApiPublicEventRouteImport.update({
   path: '/api/public/event',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicAskRoute = ApiPublicAskRouteImport.update({
-  id: '/api/public/ask',
-  path: '/api/public/ask',
+const ApiPublicNeuroRoute = ApiPublicNeuroRouteImport.update({
+  id: '/api/public/neuro',
+  path: '/api/public/neuro',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicSolveRoute = ApiPublicSolveRouteImport.update({
+  id: '/api/public/solve',
+  path: '/api/public/solve',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicTriggerRoute = ApiPublicTriggerRouteImport.update({
+  id: '/api/public/trigger',
+  path: '/api/public/trigger',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicTtsRoute = ApiPublicTtsRouteImport.update({
+  id: '/api/public/tts',
+  path: '/api/public/tts',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicBurstFinalizeRoute = ApiPublicBurstFinalizeRouteImport.update({
@@ -162,11 +162,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/resources': {
-      id: '/resources'
-      path: '/resources'
-      fullPath: '/resources'
-      preLoaderRoute: typeof ResourcesRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/hakeemneurotech': {
@@ -176,39 +176,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HakeemneurotechRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/resources': {
+      id: '/resources'
+      path: '/resources'
+      fullPath: '/resources'
+      preLoaderRoute: typeof ResourcesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/tts': {
-      id: '/api/public/tts'
-      path: '/api/public/tts'
-      fullPath: '/api/public/tts'
-      preLoaderRoute: typeof ApiPublicTtsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/trigger': {
-      id: '/api/public/trigger'
-      path: '/api/public/trigger'
-      fullPath: '/api/public/trigger'
-      preLoaderRoute: typeof ApiPublicTriggerRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/solve': {
-      id: '/api/public/solve'
-      path: '/api/public/solve'
-      fullPath: '/api/public/solve'
-      preLoaderRoute: typeof ApiPublicSolveRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api/public/neuro': {
-      id: '/api/public/neuro'
-      path: '/api/public/neuro'
-      fullPath: '/api/public/neuro'
-      preLoaderRoute: typeof ApiPublicNeuroRouteImport
+    '/api/public/ask': {
+      id: '/api/public/ask'
+      path: '/api/public/ask'
+      fullPath: '/api/public/ask'
+      preLoaderRoute: typeof ApiPublicAskRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/event': {
@@ -218,11 +197,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicEventRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/ask': {
-      id: '/api/public/ask'
-      path: '/api/public/ask'
-      fullPath: '/api/public/ask'
-      preLoaderRoute: typeof ApiPublicAskRouteImport
+    '/api/public/neuro': {
+      id: '/api/public/neuro'
+      path: '/api/public/neuro'
+      fullPath: '/api/public/neuro'
+      preLoaderRoute: typeof ApiPublicNeuroRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/solve': {
+      id: '/api/public/solve'
+      path: '/api/public/solve'
+      fullPath: '/api/public/solve'
+      preLoaderRoute: typeof ApiPublicSolveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/trigger': {
+      id: '/api/public/trigger'
+      path: '/api/public/trigger'
+      fullPath: '/api/public/trigger'
+      preLoaderRoute: typeof ApiPublicTriggerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/tts': {
+      id: '/api/public/tts'
+      path: '/api/public/tts'
+      fullPath: '/api/public/tts'
+      preLoaderRoute: typeof ApiPublicTtsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/burst/finalize': {

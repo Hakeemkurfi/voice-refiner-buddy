@@ -25,7 +25,7 @@ import requests
 BASE = os.environ.get("AXON_BASE", "https://axondynamics.lovable.app")
 COURSE = os.environ.get("AXON_COURSE", "").strip()
 VOICE = os.environ.get("AXON_VOICE", "sage")
-SPEED = os.environ.get("AXON_SPEED", "0.95")
+SPEED = os.environ.get("AXON_SPEED", "0.88")
 WIDTH = os.environ.get("AXON_WIDTH", "2328")
 HEIGHT = os.environ.get("AXON_HEIGHT", "1748")
 MAX_SIDE = int(os.environ.get("AXON_MAX_SIDE", "2400"))

@@ -241,7 +241,7 @@ export const Route = createFileRoute("/api/public/tts")({
           }
 
           // 1. Tencent Cloud first (your account, no Lovable credits).
-          const tencent = await tencentTts(text, body.voice, body.speed ?? 0.9);
+          const tencent = await tencentTts(text, body.voice, body.speed ?? 0.85);
           if (tencent.ok) {
             return new Response(tencent.audio, {
               status: 200,
@@ -254,7 +254,7 @@ export const Route = createFileRoute("/api/public/tts")({
           }
 
           // 2. Your own OpenAI account.
-          const openai = await openaiTts(text, String(body.voice ?? "sage"), body.speed ?? 0.9);
+          const openai = await openaiTts(text, String(body.voice ?? "sage"), body.speed ?? 0.85);
           if (openai.ok) {
             return new Response(openai.audio, {
               status: 200,
@@ -267,7 +267,7 @@ export const Route = createFileRoute("/api/public/tts")({
           }
 
           // 3. Lovable AI Gateway last resort.
-          const gateway = await gatewayTts(text, String(body.voice ?? "sage"), body.speed ?? 0.9);
+          const gateway = await gatewayTts(text, String(body.voice ?? "sage"), body.speed ?? 0.85);
           if (gateway.ok) {
             return new Response(gateway.audio, {
               status: 200,

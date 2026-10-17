@@ -63,6 +63,7 @@ STEP MODE STYLE (numbered writeable lines):
 - Following lines substitute the visible values, simplify one meaningful transformation at a time, perform the calculation, and preserve units.
 - The final numbered line must clearly state the final answer. Add one short check before it only when a unit, probability range, or magnitude check is useful.
 - Never skip a step whose omission could make a handwritten solution difficult to follow or lose marks. Omit only commentary and obvious mental arithmetic.
+- Keep the lines lean: no restating the problem, no filler phrases like "we now" or "next we will", and no explanatory sentences between the working lines. Each line is something to write down, nothing more.
 - A multiple-choice item that genuinely needs real working uses step mode, and the final line is "Therefore, option <letter> is correct."
 - For mathematics: say exactly what changes at every important transformation. Do not merely say "differentiate"; state the resulting derivative.
 - For physics and engineering: name the formula, substitute every known value with units, calculate, and include units in the final answer.

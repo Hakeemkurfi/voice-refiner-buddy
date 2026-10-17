@@ -33,9 +33,9 @@ export default function DefaultErrorComponent({
         <p className="mt-2 text-sm text-muted-foreground">
           An unexpected error occurred. Please try again.
         </p>
-        {import.meta.env.DEV && error.message && (
+        {import.meta.env.DEV && message && (
           <pre className="mt-4 max-h-40 overflow-auto rounded-md bg-muted p-3 text-left font-mono text-xs text-destructive">
-            {error.message}
+            {message}
           </pre>
         )}
         <div className="mt-6 flex items-center justify-center gap-3">

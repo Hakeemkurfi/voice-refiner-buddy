@@ -46,7 +46,7 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 2b. For EACH question first decide the MODE:
    - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. After the unnumbered question item, answer with ONE item, at most two: "Correct answer: Option C, twelve point five meters per second." or "Correct answer: twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
    - STEP MODE — anything that must be written out on paper: derivatives, integrals, area under a curve, arc length, double integrals, probability distributions, combinations and permutations, equations, proofs, derivations, physics or engineering calculations. Also step mode for a multiple-choice item that genuinely needs real working.
-   In STEP MODE, put an unnumbered "Solution." item after the unnumbered question item. Every working item after that is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. The question and "Solution" are never counted as lines. Restart at line one for each new worked question:
+   In STEP MODE, put an unnumbered "Solution." item after the unnumbered question item. Every working item after that is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. The question and "Solution" are never counted as lines. Restart at line one for each new worked question. Each line contains ONLY the mathematics to write (formula, substitution, result), numbers and symbols read exactly — no explanation words, no reasons. Each numbered item repeats its line twice: "Line two: f prime of x equals six x. Again, line two: f prime of x equals six x." Always use the same standard method, steps and numbers for the same question:
         a. Line one identifies the given information and what must be found, in one short sentence.
         b. Line two states the exact formula, rule, or probability distribution.
         c. Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.
@@ -101,7 +101,7 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 2b. For EACH question first decide the MODE:
    - SHORT MODE — multiple-choice, true or false, fill in the blank, definition, naming, unit, recall, or anything answerable with no real working. After the unnumbered question item, answer with ONE item, at most two: "Correct answer: Option C, twelve point five meters per second." or "Correct answer: twelve point five meters per second." plus at most one short reason sentence. Do NOT use "Line one" wording in short mode.
    - STEP MODE — anything that must be written out on paper: derivatives, integrals, area under a curve, arc length, double integrals, probability distributions, combinations and permutations, equations, proofs, derivations, physics or engineering calculations. Also step mode for a multiple-choice item that genuinely needs real working.
-   In STEP MODE, put an unnumbered "Solution." item after the unnumbered question item. Every working item after that is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. The question and "Solution" are never counted as lines. Restart at line one for each new worked question:
+   In STEP MODE, put an unnumbered "Solution." item after the unnumbered question item. Every working item after that is one numbered dictation line and MUST begin "Line one:", "Line two:", "Line three:", and so on. The question and "Solution" are never counted as lines. Restart at line one for each new worked question. Each line contains ONLY the mathematics to write (formula, substitution, result), numbers and symbols read exactly — no explanation words, no reasons. Each numbered item repeats its line twice: "Line two: f prime of x equals six x. Again, line two: f prime of x equals six x." Always use the same standard method, steps and numbers for the same question:
         a. Line one identifies the given information and what must be found, in one short sentence.
         b. Line two states the exact formula, rule, or probability distribution.
         c. Following lines substitute every known value, simplify one meaningful transformation at a time, compute, and preserve units.
@@ -178,7 +178,7 @@ async function callGemini(
       },
     ],
     generationConfig: {
-      temperature: 0.1,
+      temperature: 0,
       maxOutputTokens: 4096,
       responseMimeType: "application/json",
 
@@ -401,7 +401,7 @@ async function callDeepSeekVision(
           { role: "user", content },
         ],
         response_format: { type: "json_object" },
-        temperature: 0.1,
+        temperature: 0,
         max_tokens: 4096,
       }),
     }).catch((error) => {
@@ -448,7 +448,7 @@ async function solveWithDeepSeek(
       { role: "user", content: userContent },
     ],
     response_format: { type: "json_object" },
-    temperature: 0.1,
+    temperature: 0,
     max_tokens: 4096,
   };
 

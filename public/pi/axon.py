@@ -198,32 +198,42 @@ def _speak_local(text: str) -> None:
                     "-g", "6", text[:2000]], check=False)
 
 
-def _speak_one(text: str) -> None:
-    """Stream MP3 bytes straight into mpg123 so sound starts almost at once."""
+def _fetch_audio(text: str):
+    """Download the whole MP3 for one piece first, so playback never starves."""
     global _cloud_ok
     if not _cloud_ok:
-        return _speak_local(text)
+        return None
     r = requests.post(f"{BASE}/api/public/tts",
                       json={"text": text[:3500], "voice": VOICE, "speed": float(SPEED)},
-                      timeout=180, stream=True)
+                      timeout=180)
     if r.status_code in (401, 402, 403, 404, 429):
-        # No hosted voice available (e.g. credit exhausted). Stop asking for
-        # the rest of this session and keep working with the device voice.
         _cloud_ok = False
         log(f"hosted voice unavailable ({r.status_code}); using device voice from now on")
-        return _speak_local(text)
+        return None
     r.raise_for_status()
-    p = subprocess.Popen(["mpg123", "-q", "-"], stdin=subprocess.PIPE)
+    return r.content
+
+
+def _play_mp3(data: bytes) -> None:
+    # Full file in memory + a playback buffer = smooth audio over Bluetooth,
+    # no skipped words when Wi-Fi is slow.
+    p = subprocess.Popen(["mpg123", "-q", "--buffer", "2048", "--preload", "1", "-"],
+                         stdin=subprocess.PIPE)
     try:
-        for chunk in r.iter_content(chunk_size=4096):
-            if chunk:
-                p.stdin.write(chunk)
+        p.stdin.write(data)
     finally:
         try:
             p.stdin.close()
         except Exception:
             pass
         p.wait()
+
+
+def _speak_one(text: str) -> None:
+    data = _fetch_audio(text)
+    if data is None:
+        return _speak_local(text)
+    _play_mp3(data)
 
 
 def _sentences(text: str, target: int = 220) -> list[str]:
@@ -246,8 +256,19 @@ def speak(text: str) -> None:
     if not text.strip():
         return
     try:
-        for piece in _sentences(text):
-            _speak_one(piece)
+        from concurrent.futures import ThreadPoolExecutor
+        pieces = _sentences(text)
+        # Download the next piece while the current one plays: no gaps, no skips.
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            futs = [ex.submit(_fetch_audio, pc) for pc in pieces[:2]]
+            for i, pc in enumerate(pieces):
+                data = futs[i].result()
+                if i + 2 < len(pieces):
+                    futs.append(ex.submit(_fetch_audio, pieces[i + 2]))
+                if data is None:
+                    _speak_local(pc)
+                else:
+                    _play_mp3(data)
     except Exception as e:  # offline / TTS down -> local voice
         log(f"cloud speech failed ({e}); using device voice")
         _speak_local(text)

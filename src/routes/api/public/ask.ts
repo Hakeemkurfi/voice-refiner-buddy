@@ -63,6 +63,9 @@ STEP MODE STYLE (numbered writeable lines):
 - Following lines substitute the visible values, simplify one meaningful transformation at a time, perform the calculation, and preserve units.
 - The final numbered line must clearly state the final answer. Add one short check before it only when a unit, probability range, or magnitude check is useful.
 - Never skip a step whose omission could make a handwritten solution difficult to follow or lose marks. Omit only commentary and obvious mental arithmetic.
+- PURE WORKING ONLY: every numbered line contains only the mathematics to write — the formula, the substitution, or the result — read exactly as written on paper, numbers and symbols spoken accurately (for example "x squared plus three x", "the integral from zero to two of", "n choose r"). No words of explanation, no reasons, no "because", "since", "so", "we", "this gives", "notice". Line one may simply list the given values and the unknown.
+- SAY EVERY LINE TWICE: speak each numbered line, then immediately repeat it word for word, for example "Line two: f prime of x equals six x plus two. Again, line two: f prime of x equals six x plus two." Only then move to the next line. The final answer line is also said twice.
+- CONSISTENCY: for the same question always use the same method, the same steps, the same numbers and the same final answer. Choose the standard textbook method and never vary it.
 - Keep the lines lean: no restating the problem, no filler phrases like "we now" or "next we will", and no explanatory sentences between the working lines. Each line is something to write down, nothing more.
 - A multiple-choice item that genuinely needs real working uses step mode, and the final line is "Therefore, option <letter> is correct."
 - For mathematics: say exactly what changes at every important transformation. Do not merely say "differentiate"; state the resulting derivative.
@@ -111,7 +114,7 @@ async function askDeepSeek(
           { role: "system", content: system },
           { role: "user", content: userContent },
         ],
-        temperature: 0.1,
+        temperature: 0,
         max_tokens: 4096,
       }),
     }).catch((error) => {
@@ -155,7 +158,7 @@ async function askGemini(
 
   const body = {
     contents: [{ role: "user", parts }],
-    generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
+    generationConfig: { temperature: 0, maxOutputTokens: 4096 },
   };
 
   let lastError = "Gemini request failed.";

@@ -73,7 +73,8 @@ function tencentVoiceType(voice?: string | number): number {
 
 function openaiToTencentSpeed(speed?: number): number {
   // OpenAI speed is 0.5–1.5; Tencent Speed is -2 to 2.
-  const s = Number(speed) || 0.9;
+  // Classroom dictation: always 0.15 slower than requested so every step can be written down.
+  const s = (Number(speed) || 0.9) - 0.15;
   return Math.round(Math.min(2, Math.max(-2, (s - 1) * 4)) * 10) / 10;
 }
 

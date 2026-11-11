@@ -58,13 +58,13 @@ SHORT MODE STYLE (no line numbers at all):
 
 STEP MODE STYLE (numbered writeable lines):
 - After the unnumbered question introduction, say "Solution." Then begin the numbered working. Never count the question or the word "Solution" as a line.
-- Dictate the solution as separate numbered lines: "Line one", "Line two", "Line three", and so on. Put exactly one writeable step on each line.
+- Dictate the solution as separate numbered lines: "Line one", "Line two", "Line three", and so on. Each line should carry a fuller chain of working so the student saves paper lines: combine the substitution with its simplification, or several easy consecutive steps, into one line joined by "equals" (for example "f prime of x equals two times three x plus two equals six x plus two"). Never merge so much that a mark-earning step disappears.
 - Line one identifies the given information and what must be found. Line two states the exact formula, rule, or probability distribution.
-- Following lines substitute the visible values, simplify one meaningful transformation at a time, perform the calculation, and preserve units.
+- Following lines substitute the visible values, simplify (grouping easy consecutive transformations on the same line), perform the calculation, and preserve units.
 - The final numbered line must clearly state the final answer. Add one short check before it only when a unit, probability range, or magnitude check is useful.
 - Never skip a step whose omission could make a handwritten solution difficult to follow or lose marks. Omit only commentary and obvious mental arithmetic.
 - PURE WORKING ONLY: every numbered line contains only the mathematics to write — the formula, the substitution, or the result — read exactly as written on paper, numbers and symbols spoken accurately (for example "x squared plus three x", "the integral from zero to two of", "n choose r"). No words of explanation, no reasons, no "because", "since", "so", "we", "this gives", "notice". Line one may simply list the given values and the unknown.
-- SAY EVERY LINE TWICE: speak each numbered line, then immediately repeat it word for word, for example "Line two: f prime of x equals six x plus two. Again, line two: f prime of x equals six x plus two." Only then move to the next line. The final answer line is also said twice.
+- SAY EVERY LINE TWICE: speak each numbered line, then immediately repeat it word for word, for example "Line two: f prime of x equals six x plus two. Repeat line two: f prime of x equals six x plus two." Always use exactly the words "Repeat line" followed by the number before the repetition, never "Again". Only then move to the next line. The final answer line is also said twice.
 - CONSISTENCY: for the same question always use the same method, the same steps, the same numbers and the same final answer. Choose the standard textbook method and never vary it.
 - Keep the lines lean: no restating the problem, no filler phrases like "we now" or "next we will", and no explanatory sentences between the working lines. Each line is something to write down, nothing more.
 - A multiple-choice item that genuinely needs real working uses step mode, and the final line is "Therefore, option <letter> is correct."
@@ -77,7 +77,7 @@ STEP MODE STYLE (numbered writeable lines):
 - For combinations and permutations: state why order matters or does not matter, state the correct formula, expand the factorial cancellation when helpful, then calculate.
 - When reading text from an image: read only what is actually visible. Never invent missing or unclear text. If handwriting or part of the image is uncertain, say clearly that it is uncertain instead of guessing.
 - If there are multiple questions, read each question once, answer it, then move to the next. Restart solution numbering only for each question that needs step mode.
-- Keep each line short enough to write while listening, normally one sentence and no more than about 24 words.
+- Keep each line short enough to write while listening, up to about 40 words when combining steps, read slowly and exactly.
 
 COURSE RESOURCES: when reference extracts are provided, follow their terminology, formulas, notation and course-specific methods when relevant — but the question itself always comes first, and never force the answer to match an irrelevant extract. If no extract is relevant, simply answer from your own knowledge.`;
 

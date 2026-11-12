@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { COMPACT_LAYOUT_EXAMPLE, MATH_DICTATION_RULES, PURE_WORKING_EXAMPLE, repeatDictationLines } from "./math-dictation";
 
 const Input = z.object({
   image_b64: z.string().min(0).optional(),
@@ -74,7 +75,10 @@ DICTATION RULES for the "steps" array — these are spoken aloud in order and MU
 
 5. Keep handwriting in mind: prefer short, writeable lines. Do NOT pad or explain theory that was not asked, but never sacrifice a formula, substitution, bound, unit, or important transformation.
 
-confidence = 0.0 to 1.0 — how sure you are of the reading AND the answer.`;
+confidence = 0.0 to 1.0 — how sure you are of the reading AND the answer.
+${MATH_DICTATION_RULES}
+${COMPACT_LAYOUT_EXAMPLE}
+${PURE_WORKING_EXAMPLE}`;
 
 // ─── OCR-only prompt used when DeepSeek is the solver layer ───────────────────
 const OCR_PROMPT = `You are an elite OCR engine. Extract every word, number, symbol, and equation from the image exactly as it appears. Preserve line breaks and structure. The page contains physics problems: rigid body rotation about a fixed axis, vibrations and waves, or wave optics.
@@ -82,7 +86,7 @@ const OCR_PROMPT = `You are an elite OCR engine. Extract every word, number, sym
 Return ONLY JSON:
 {"title":"short title (max 8 words)","summary":"one spoken sentence naming the topic","extractedText":"verbatim text with line breaks; math in LaTeX $...$","confidence":0.0_to_1.0}
 
-Do NOT solve the problems. Do NOT explain. Only extract text faithfully.`;
+Do NOT solve the problems. Do NOT explain. Only extract text faithfully. The actual subject may be multivariable calculus or any other academic subject. Preserve matrix rows, columns, outside-bracket labels, radical scope and integral limits. Mark unreadable entries as uncertain; never fill them in from examples.`;
 
 // ─── DeepSeek solver prompt (text-only after Gemini OCR) ───────────────────────
 const DEEPSEEK_SOLVER_PROMPT = `You are a calm, patient physics/math tutor dictating to a student who is WALKING with earbuds and cannot see the page. You are given the exact text of a physics page. The page contains problems from: rigid body rotation about a fixed axis, vibrations and waves, or wave optics.
@@ -135,7 +139,10 @@ RESOURCE RULES (when "COURSE RESOURCE EXTRACTS" are supplied):
 - When they are irrelevant or conflict with the visible problem, ignore them and solve the real problem; if the difference matters, mention it in one short sentence.
 - Never quote raw document formatting, tables, page headers or citation markup into the spoken steps.
 
-confidence = 0.0 to 1.0 — how sure you are of the final answer.`;
+confidence = 0.0 to 1.0 — how sure you are of the final answer.
+${MATH_DICTATION_RULES}
+${COMPACT_LAYOUT_EXAMPLE}
+${PURE_WORKING_EXAMPLE}`;
 
 // ─── Direct Google Gemini REST API ────────────────────────────────────────────
 async function callGemini(
@@ -718,7 +725,7 @@ function finalize(
 ) {
   const steps = (parsed.steps ?? []).filter(
     (s) => typeof s === "string" && s.trim().length > 0,
-  );
+  ).map(repeatDictationLines);
   return {
     title: parsed.title ?? "Result",
     summary: parsed.summary ?? "",

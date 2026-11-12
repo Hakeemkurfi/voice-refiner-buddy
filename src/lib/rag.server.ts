@@ -181,11 +181,12 @@ export async function retrieveChunks(
   ).slice(0, 8);
   if (words.length === 0) return [];
 
-  const { data, error } = await db()
+  let keywordSearch = db()
     .from("resource_chunks")
-    .select("id, resource_id, chunk_index, content, page, section, resources(title, course, subject)")
-    .textSearch("tsv", words.join(" | "), { config: "english" })
-    .limit(limit);
+    .select("id, resource_id, chunk_index, content, page, section, resources!inner(title, course, subject)")
+    .textSearch("tsv", words.join(" | "), { config: "english" });
+  if (opts.course) keywordSearch = keywordSearch.eq("resources.course", opts.course);
+  const { data, error } = await keywordSearch.limit(limit);
 
   if (error || !data) return [];
 

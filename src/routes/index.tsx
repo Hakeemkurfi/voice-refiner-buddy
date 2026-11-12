@@ -36,6 +36,10 @@ export const Route = createFileRoute("/")({
         content:
           "Axon Dynamics is a research and innovation company advancing neurotechnology — building intelligent systems that bridge brain-computer interfaces, AI vision, and real-time neural decoding for science and assistive applications.",
       },
+      { property: "og:title", content: "Axon AI Reader — Spoken Academic Solutions" },
+      { property: "og:description", content: "Read academic questions and hear accurate, repeatable mathematical working with course references." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: Index,

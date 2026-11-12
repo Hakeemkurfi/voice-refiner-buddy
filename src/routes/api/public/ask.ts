@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { COMPACT_LAYOUT_EXAMPLE, MATH_DICTATION_RULES, PURE_WORKING_EXAMPLE, repeatDictationLines } from "@/lib/math-dictation";
 
 // Simplest bridge for the Raspberry Pi: send a photo and/or a question, get a
 // plain text answer back. DeepSeek is the primary provider; Gemini is only a
@@ -79,7 +80,10 @@ STEP MODE STYLE (numbered writeable lines):
 - If there are multiple questions, read each question once, answer it, then move to the next. Restart solution numbering only for each question that needs step mode.
 - Keep each line short enough to write while listening, up to about 40 words when combining steps, read slowly and exactly.
 
-COURSE RESOURCES: when reference extracts are provided, follow their terminology, formulas, notation and course-specific methods when relevant — but the question itself always comes first, and never force the answer to match an irrelevant extract. If no extract is relevant, simply answer from your own knowledge.`;
+COURSE RESOURCES: when reference extracts are provided, follow their terminology, formulas, notation and course-specific methods when relevant — but the question itself always comes first, and never force the answer to match an irrelevant extract. If no extract is relevant, simply answer from your own knowledge.
+${MATH_DICTATION_RULES}
+${COMPACT_LAYOUT_EXAMPLE}
+${PURE_WORKING_EXAMPLE}`;
 
 async function askDeepSeek(
   apiKey: string,
@@ -147,16 +151,12 @@ async function askGemini(
   resourceContext: string,
 ): Promise<string> {
   const parts: unknown[] = [
-    {
-      text:
-        SPOKEN_RULES +
-        (resourceContext ? `\n\nCourse resource extracts (reference only):\n${resourceContext}` : "") +
-        `\n\n${prompt}`,
-    },
+    { text: prompt + (resourceContext ? `\n\nCourse resource extracts (reference only):\n${resourceContext}` : "") },
   ];
   if (imageB64) parts.push({ inlineData: { mimeType: "image/jpeg", data: imageB64 } });
 
   const body = {
+    systemInstruction: { parts: [{ text: SPOKEN_RULES }] },
     contents: [{ role: "user", parts }],
     generationConfig: { temperature: 0, maxOutputTokens: 4096 },
   };
@@ -291,14 +291,15 @@ export const Route = createFileRoute("/api/public/ask")({
 
           if (deepseekKey) {
             try {
-              return respond(await askDeepSeek(deepseekKey, prompt, imageB64, resourceContext));
+              return respond(repeatDictationLines(await askDeepSeek(deepseekKey, prompt, imageB64, resourceContext)));
             } catch (e) {
               if (!geminiKey) throw e;
               console.warn("DeepSeek failed, falling back to Gemini:", (e as Error).message);
             }
           }
 
-          return respond(await askGemini(geminiKey!, prompt, imageB64, tier, resourceContext));
+      if (!geminiKey) return respond("No working AI provider is available.", 502);
+      return respond(repeatDictationLines(await askGemini(geminiKey, prompt, imageB64, tier, resourceContext)));
         } catch (e) {
           return respond((e as Error).message, 502);
         }

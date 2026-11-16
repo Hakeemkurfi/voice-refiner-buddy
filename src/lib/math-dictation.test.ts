@@ -20,3 +20,9 @@ describe("dictation repetition", () => {
       .toBe("Draw line one: Label x and y axes.\nRepeat draw line one: Label x and y axes.");
   });
 });
+import { MATH_DICTATION_RULES } from "./math-dictation";
+describe("truth table and diagram rules", () => {
+  test("truth table rows must name each column", () => {
+    expect(MATH_DICTATION_RULES).toContain("Never read a bare sequence like T F T T without its column names");
+  });
+});

@@ -290,6 +290,40 @@ def run_once() -> str:
     return answer
 
 
+_speak_lock = None
+
+
+def phone_listener() -> None:
+    """Backup camera: speak answers for photos taken on the phone website.
+
+    Polls /api/public/pi-say every few seconds; any new answer queued by the
+    phone (with "Speak the answer on my Pi" ticked) is spoken here.
+    """
+    import threading
+    global _speak_lock
+    _speak_lock = threading.Lock()
+    after = None
+    while True:
+        try:
+            params = {"after": after} if after else {}
+            r = requests.get(f"{BASE}/api/public/pi-say", params=params, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+            if after is None:
+                after = data.get("now")  # ignore anything older than startup
+            for item in data.get("items", []):
+                after = item["created_at"]
+                text = (item.get("text") or "").strip()
+                if text:
+                    log("phone photo answer: " + text[:200].replace("\n", " "))
+                    with _speak_lock:
+                        speak("Phone picture answer. " + text)
+        except Exception as e:
+            log(f"phone listener: {str(e)[:100]}")
+            time.sleep(10)
+        time.sleep(3)
+
+
 def key_loop() -> None:
     """Read HID keys globally if evdev is available, else fall back to ENTER."""
     last = ""
@@ -341,4 +375,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--once":
         print(json.dumps({"answer": run_once()}, indent=2))
     else:
+        if os.environ.get("AXON_PHONE", "1") != "0":
+            import threading
+            threading.Thread(target=phone_listener, daemon=True).start()
         key_loop()

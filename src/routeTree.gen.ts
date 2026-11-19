@@ -15,6 +15,7 @@ import { Route as ResourcesRouteImport } from './routes/resources'
 import { Route as ApiPublicAskRouteImport } from './routes/api/public/ask'
 import { Route as ApiPublicEventRouteImport } from './routes/api/public/event'
 import { Route as ApiPublicNeuroRouteImport } from './routes/api/public/neuro'
+import { Route as ApiPublicPiSayRouteImport } from './routes/api/public/pi-say'
 import { Route as ApiPublicSolveRouteImport } from './routes/api/public/solve'
 import { Route as ApiPublicTriggerRouteImport } from './routes/api/public/trigger'
 import { Route as ApiPublicTtsRouteImport } from './routes/api/public/tts'
@@ -50,6 +51,11 @@ const ApiPublicNeuroRoute = ApiPublicNeuroRouteImport.update({
   path: '/api/public/neuro',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicPiSayRoute = ApiPublicPiSayRouteImport.update({
+  id: '/api/public/pi-say',
+  path: '/api/public/pi-say',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicSolveRoute = ApiPublicSolveRouteImport.update({
   id: '/api/public/solve',
   path: '/api/public/solve',
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
+  '/api/public/pi-say': typeof ApiPublicPiSayRoute
   '/api/public/solve': typeof ApiPublicSolveRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
+  '/api/public/pi-say': typeof ApiPublicPiSayRoute
   '/api/public/solve': typeof ApiPublicSolveRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/api/public/ask': typeof ApiPublicAskRoute
   '/api/public/event': typeof ApiPublicEventRoute
   '/api/public/neuro': typeof ApiPublicNeuroRoute
+  '/api/public/pi-say': typeof ApiPublicPiSayRoute
   '/api/public/solve': typeof ApiPublicSolveRoute
   '/api/public/trigger': typeof ApiPublicTriggerRoute
   '/api/public/tts': typeof ApiPublicTtsRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
+    | '/api/public/pi-say'
     | '/api/public/solve'
     | '/api/public/trigger'
     | '/api/public/tts'
@@ -129,6 +139,7 @@ export interface FileRouteTypes {
     | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
+    | '/api/public/pi-say'
     | '/api/public/solve'
     | '/api/public/trigger'
     | '/api/public/tts'
@@ -141,6 +152,7 @@ export interface FileRouteTypes {
     | '/api/public/ask'
     | '/api/public/event'
     | '/api/public/neuro'
+    | '/api/public/pi-say'
     | '/api/public/solve'
     | '/api/public/trigger'
     | '/api/public/tts'
@@ -154,6 +166,7 @@ export interface RootRouteChildren {
   ApiPublicAskRoute: typeof ApiPublicAskRoute
   ApiPublicEventRoute: typeof ApiPublicEventRoute
   ApiPublicNeuroRoute: typeof ApiPublicNeuroRoute
+  ApiPublicPiSayRoute: typeof ApiPublicPiSayRoute
   ApiPublicSolveRoute: typeof ApiPublicSolveRoute
   ApiPublicTriggerRoute: typeof ApiPublicTriggerRoute
   ApiPublicTtsRoute: typeof ApiPublicTtsRoute
@@ -204,6 +217,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicNeuroRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/pi-say': {
+      id: '/api/public/pi-say'
+      path: '/api/public/pi-say'
+      fullPath: '/api/public/pi-say'
+      preLoaderRoute: typeof ApiPublicPiSayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/solve': {
       id: '/api/public/solve'
       path: '/api/public/solve'
@@ -242,6 +262,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicAskRoute: ApiPublicAskRoute,
   ApiPublicEventRoute: ApiPublicEventRoute,
   ApiPublicNeuroRoute: ApiPublicNeuroRoute,
+  ApiPublicPiSayRoute: ApiPublicPiSayRoute,
   ApiPublicSolveRoute: ApiPublicSolveRoute,
   ApiPublicTriggerRoute: ApiPublicTriggerRoute,
   ApiPublicTtsRoute: ApiPublicTtsRoute,

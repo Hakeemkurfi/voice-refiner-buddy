@@ -70,6 +70,13 @@ function Index() {
   const [serverReachable, setServerReachable] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lastImage, setLastImage] = useState<string | null>(null);
+  const [sendToPi, setSendToPi] = useState(false);
+  const sendToPiRef = useRef(false);
+  useEffect(() => {
+    const v = localStorage.getItem("axon-send-to-pi") === "1";
+    setSendToPi(v);
+    sendToPiRef.current = v;
+  }, []);
   const [extracted, setExtracted] = useState<string>("");
   const [usedModel, setUsedModel] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +154,9 @@ function Index() {
   const handleCapture = useCallback(async (
     arg: { image_b64?: string; burst_id?: string },
     model: "flash" | "pro" | "auto" | "deepseek" = "deepseek",
+    fromPhone = false,
   ) => {
+    const toPi = fromPhone && sendToPiRef.current;
     setBusy(true);
     setError(null);
     setLastImage(arg.image_b64 ?? null);
@@ -169,6 +178,17 @@ function Index() {
           model,
         },
       });
+
+      if (toPi) {
+        const r = await fetch("/api/public/pi-say", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: out.steps.join("\n") }),
+        });
+        addItem({ id: crypto.randomUUID(), title: out.title, steps: out.steps }, false);
+        setStatus(r.ok ? "Answer sent to your Pi. Listen in your earbuds." : "Could not send to the Pi. Try again.");
+        return;
+      }
 
       if (hasPriorResultRef.current) {
         stopTts();
@@ -454,7 +474,7 @@ function Index() {
     try {
       setStatus("Compressing photo…");
       const b64 = await fileToBase64(file);
-      await handleCapture({ image_b64: b64 }, useProModel ? "pro" : "flash");
+      await handleCapture({ image_b64: b64 }, useProModel ? "pro" : "flash", true);
     } catch (e) {
       setError(`Photo upload failed: ${(e as Error).message}`);
     }
@@ -794,6 +814,18 @@ function Index() {
               </p>
             </div>
           </div>
+          <label className="flex items-center gap-2 mb-3 text-sm font-medium cursor-pointer">
+            <input
+              type="checkbox"
+              checked={sendToPi}
+              onChange={(e) => {
+                setSendToPi(e.target.checked);
+                sendToPiRef.current = e.target.checked;
+                localStorage.setItem("axon-send-to-pi", e.target.checked ? "1" : "0");
+              }}
+            />
+            Speak the answer on my Pi earbuds (phone stays silent)
+          </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent">
               <Camera className="h-4 w-4" />

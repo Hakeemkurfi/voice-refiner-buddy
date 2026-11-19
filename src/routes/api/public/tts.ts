@@ -71,10 +71,19 @@ function tencentVoiceType(voice?: string | number): number {
   return known[voice ?? ""] ?? 1001; // 1001 = clear English female
 }
 
+// Classroom dictation slowdown: answers are spoken this much slower than a
+// client asks for, so every written step can be copied down. One knob for all
+// three voice providers; the Pi's own AXON_SPEED setting sits on top of it.
+const DICTATION_SLOWDOWN = 0.25;
+
+function requestedSpeed(speed?: number): number {
+  const s = Number(speed) || 0.9;
+  return Math.min(1.5, Math.max(0.5, s - DICTATION_SLOWDOWN));
+}
+
 function openaiToTencentSpeed(speed?: number): number {
   // OpenAI speed is 0.5–1.5; Tencent Speed is -2 to 2.
-  // Classroom dictation: always 0.15 slower than requested so every step can be written down.
-  const s = (Number(speed) || 0.9) - 0.15;
+  const s = requestedSpeed(speed);
   return Math.round(Math.min(2, Math.max(-2, (s - 1) * 4)) * 10) / 10;
 }
 
@@ -156,7 +165,7 @@ async function openaiTts(text: string, voice: string, speed: number) {
       model: "gpt-4o-mini-tts",
       input: text,
       voice: voice ?? "sage",
-      speed,
+      speed: requestedSpeed(speed),
       response_format: "mp3",
       instructions:
         "Speak as a calm, patient tutor dictating math step by step on the phone. " +
@@ -196,7 +205,7 @@ async function gatewayTts(text: string, voice: string, speed: number) {
       model: "openai/gpt-4o-mini-tts",
       input: text,
       voice: voice ?? "sage",
-      speed,
+      speed: requestedSpeed(speed),
       response_format: "mp3",
       stream_format: "audio",
       instructions:

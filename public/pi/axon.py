@@ -194,7 +194,7 @@ def _fetch_audio(text: str):
     if not _cloud_ok:
         return None
     r = requests.post(f"{BASE}/api/public/tts",
-                      json={"text": text[:3500], "voice": VOICE, "speed": float(SPEED)},
+                      json={"text": text[:20000], "voice": VOICE, "speed": float(SPEED)},
                       timeout=180)
     if r.status_code in (401, 402, 403, 404, 429):
         _cloud_ok = False
@@ -253,26 +253,25 @@ def _sentences(text: str, target: int = 220) -> list[str]:
 
 
 def speak(text: str) -> None:
+    """Download the WHOLE answer first, then play it.
+
+    The website splits the answer into short pieces and joins them with clean
+    pauses. Fetching everything before playback means Wi-Fi is idle while the
+    earbuds play (on the Pi Zero 2 W, Wi-Fi and Bluetooth share one radio, so
+    downloading during playback makes Bluetooth audio stutter).
+    """
     if not text.strip():
         return
     try:
-        from concurrent.futures import ThreadPoolExecutor
-        pieces = _sentences(text)
-        # Download the next piece while the current one plays: no gaps, no skips.
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            futs = [ex.submit(_fetch_audio, pc) for pc in pieces[:2]]
-            for i, pc in enumerate(pieces):
-                data = futs[i].result()
-                if i + 2 < len(pieces):
-                    futs.append(ex.submit(_fetch_audio, pieces[i + 2]))
-                if data is None:
-                    _speak_local(pc)
-                else:
-                    _play_mp3(data)
+        data = _fetch_audio(text)
+        if data is None:
+            for pc in _sentences(text):
+                _speak_local(pc)
+            return
+        _play_mp3(data)
     except Exception as e:  # offline / TTS down -> local voice
         log(f"cloud speech failed ({e}); using device voice")
         _speak_local(text)
-
 
 
 def run_once() -> str:

@@ -54,7 +54,7 @@ FIRST DECIDE THE MODE:
 - STEP MODE — anything that must be solved on paper: derivatives, integrals, area under a curve, arc length, double integrals, probability distributions, combinations and permutations, equations, proofs, derivations, physics or engineering calculations.
 
 SHORT MODE STYLE (no line numbers at all):
-- After reading the question once, say the answer clearly and emphatically, for example "Correct answer: Option C, twelve point five meters per second." For a question without lettered options, say "Correct answer:" followed by the answer. Then give at most one short reason sentence and stop.
+- After reading the question once, say the answer clearly and emphatically, for example "Correct answer: Option C, twelve point five meters per second." For a question without lettered options, say "Correct answer:" followed by the answer. Then stop. No reason sentence unless the question asks for one.
 - If a very small calculation is needed, say it inside that one sentence. Never use the words "Line one".
 
 STEP MODE STYLE (numbered writeable lines):
@@ -111,7 +111,7 @@ async function askDeepSeek(
     const res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(120000),
       body: JSON.stringify({
         model,
         messages: [
@@ -119,7 +119,7 @@ async function askDeepSeek(
           { role: "user", content: userContent },
         ],
         temperature: 0,
-        max_tokens: 4096,
+        max_tokens: 8192,
       }),
     }).catch((error) => {
       lastError = `DeepSeek ${model}: ${(error as Error).message}`;
@@ -135,8 +135,36 @@ async function askDeepSeek(
       continue;
     }
 
-    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const answer = json.choices?.[0]?.message?.content?.trim() ?? "";
+    const json = (await res.json()) as {
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
+    };
+    let answer = json.choices?.[0]?.message?.content?.trim() ?? "";
+    let finish = json.choices?.[0]?.finish_reason;
+    // If the answer was cut off, ask the model to carry on until the page is done.
+    for (let round = 0; answer && finish === "length" && round < 3; round++) {
+      const more = await fetch("https://api.deepseek.com/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(120000),
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userContent },
+            { role: "assistant", content: answer },
+            { role: "user", content: "Continue exactly where you stopped, same format, until every question and part is fully answered. Do not repeat anything already said." },
+          ],
+          temperature: 0,
+          max_tokens: 8192,
+        }),
+      }).catch(() => null);
+      if (!more?.ok) break;
+      const mj = (await more.json()) as typeof json;
+      const extra = mj.choices?.[0]?.message?.content?.trim() ?? "";
+      if (!extra) break;
+      answer += "\n" + extra;
+      finish = mj.choices?.[0]?.finish_reason;
+    }
     if (answer) return answer;
     lastError = `DeepSeek ${model} returned an empty answer.`;
   }
@@ -158,7 +186,7 @@ async function askGemini(
   const body = {
     systemInstruction: { parts: [{ text: SPOKEN_RULES }] },
     contents: [{ role: "user", parts }],
-    generationConfig: { temperature: 0, maxOutputTokens: 4096 },
+    generationConfig: { temperature: 0, maxOutputTokens: 8192 },
   };
 
   let lastError = "Gemini request failed.";

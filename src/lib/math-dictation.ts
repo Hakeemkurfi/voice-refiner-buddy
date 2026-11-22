@@ -1,4 +1,7 @@
 export const MATH_DICTATION_RULES = `PRIORITY ACCURACY AND LAYOUT RULES (override any conflicting earlier instructions):
+- STUDENT SOLUTION, NO COMMENTARY: write like a student's exam script, not an expert's explanation. No remarks, tips, observations, reasons or side notes anywhere in a solution. Only add a short note when the student truly must notice it (for example a sign change or a condition that changes the answer), and keep it to a few words.
+- OBJECTIVE QUESTIONS: straight answer as usual. If an objective question explicitly asks for a solution or working, give a short summary in two or three lines, never an expanded solution.
+- COMPLETE EVERY QUESTION: answer every question and every part (a, b, c, i, ii...) visible on the page, in order, all the way to its final answer. Never stop early, never leave a part unanswered, never end with "and so on". Keep each question compact so the whole page fits.
 - Cover the actual subject, including multivariable calculus, not only physics. Never invent a missing value, symbol, matrix entry, bound or orientation. If a necessary detail is unreadable, identify the exact uncertainty and request clarification; symbolic working is allowed. Verify all signs, coefficients, powers, roots, bounds and final arithmetic before speaking. Reference workings may be wrong: independently recompute, keeping valid course methods, not incorrect results.
 - Read the question once without line numbering. Objective answers remain direct. Worked answers start with unnumbered Solution, then numbered mathematical working only. No First, Next, because, since, or explanatory commentary in working lines. Retain every formula, substitution, important transformation and final answer. Combine easy consecutive equalities into one writable line, not an excessively long speech block.
 - Speak every numbered working line exactly twice, with Line one: ... Repeat line one: ... before Line two. Repeat identical numbers, words, signs and ordering; the second reading is not a new calculation. Use the same standard method for unchanged inputs; never promise certainty where the image is uncertain.
@@ -16,10 +19,15 @@ export const PURE_WORKING_EXAMPLE = `FINAL FORMAT CHECK: remove explanatory clau
 
 // Repetition is a delivery invariant, not left solely to model compliance.
 export function repeatDictationLines(text: string): string {
-  return text.replace(/(?:^|\n)\s*((?:Draw\s+)?Line\s+(?:\d+|[a-z]+(?:[ -][a-z]+)?))\s*:\s*([\s\S]*?)(?=\n\s*(?:(?:Draw\s+)?Line\s+(?:\d+|[a-z]+(?:[ -][a-z]+)?)\s*:|Solution\b|Next question\b)|$)/gi,
-    (_match, label: string, body: string) => {
-      const original = body.split(/\b(?:Repeat\s+(?:draw\s+)?line|Again,?\s+(?:draw\s+)?line)\s+(?:\d+|[a-z]+(?:[ -][a-z]+)?)\s*:/i)[0]?.trim() ?? "";
-      if (!original) return `\n${label}:`;
-      return `\n${label}: ${original}\nRepeat ${label.toLowerCase()}: ${original}`;
-    }).trim();
+  const LABEL = /^\s*((?:Draw\s+)?Line\s+(?:\d+|[a-z]+(?:[ -][a-z]+)?))\s*:\s*(.*)$/i;
+  const REPEAT = /^\s*(?:Repeat|Again,?)\s+(?:draw\s+)?line\s+(?:\d+|[a-z]+(?:[ -][a-z]+)?)\s*:/i;
+  const out: string[] = [];
+  for (const raw of text.split("\n")) {
+    if (REPEAT.test(raw)) continue; // rebuilt from the first reading below
+    const m = raw.match(LABEL);
+    if (!m) { out.push(raw); continue; }
+    const body = m[2].split(/\b(?:Repeat|Again,?)\s+(?:draw\s+)?line\s+(?:\d+|[a-z]+(?:[ -][a-z]+)?)\s*:/i)[0].trim();
+    out.push(`${m[1]}: ${body}`, `Repeat ${m[1].toLowerCase()}: ${body}`);
+  }
+  return out.join("\n").trim();
 }

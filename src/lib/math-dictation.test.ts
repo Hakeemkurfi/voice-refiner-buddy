@@ -26,3 +26,10 @@ describe("truth table and diagram rules", () => {
     expect(MATH_DICTATION_RULES).toContain("Never read a bare sequence like T F T T without its column names");
   });
 });
+
+import { test as t2, expect as e2 } from "bun:test";
+t2("keeps question introductions between solutions", () => {
+  const out = repeatDictationLines("Line one: x equals 1.\nRepeat line one: x equals 1.\nQ3. Solve 2x=6.\nSolution.\nLine one: x equals 3.");
+  e2(out).toContain("Q3. Solve 2x=6.");
+  e2(out).toContain("Repeat line one: x equals 3.");
+});

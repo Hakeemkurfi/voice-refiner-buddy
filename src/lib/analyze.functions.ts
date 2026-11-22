@@ -186,7 +186,7 @@ async function callGemini(
     ],
     generationConfig: {
       temperature: 0,
-      maxOutputTokens: 4096,
+      maxOutputTokens: 8192,
       responseMimeType: "application/json",
 
     },
@@ -400,7 +400,7 @@ async function callDeepSeekVision(
     const res = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(60000),
+      signal: AbortSignal.timeout(120000),
       body: JSON.stringify({
         model,
         messages: [
@@ -409,7 +409,7 @@ async function callDeepSeekVision(
         ],
         response_format: { type: "json_object" },
         temperature: 0,
-        max_tokens: 4096,
+        max_tokens: 8192,
       }),
     }).catch((error) => {
       lastError = `DeepSeek ${model}: ${(error as Error).message}`;
@@ -456,7 +456,7 @@ async function solveWithDeepSeek(
     ],
     response_format: { type: "json_object" },
     temperature: 0,
-    max_tokens: 4096,
+    max_tokens: 8192,
   };
 
   const res = await fetch("https://api.deepseek.com/chat/completions", {
@@ -465,7 +465,7 @@ async function solveWithDeepSeek(
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    signal: AbortSignal.timeout(30000),
+    signal: AbortSignal.timeout(90000),
     body: JSON.stringify(body),
   }).catch((error) => {
     throw new Error(`DeepSeek request failed: ${(error as Error).message}`);

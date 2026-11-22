@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createHash, createHmac } from "crypto";
+import { SILENCE_B64 } from "@/lib/voice-silence";
 
 // Server-side TTS proxy.
 // Priority:
@@ -274,7 +275,45 @@ async function voicePieces(
   };
   await Promise.all(Array.from({ length: Math.min(4, pieces.length) }, worker));
   if (failed || results.some((b) => !b)) return null;
-  return Buffer.concat(results as Buffer[]);
+  return joinWithPauses(pieces, results as Buffer[]);
+}
+
+// Sample rate of the first MPEG audio frame (skips an ID3 tag if present).
+export function mp3SampleRate(buf: Uint8Array): number | null {
+  let i = 0;
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33 && buf.length > 10) {
+    i = 10 + (((buf[6]! & 0x7f) << 21) | ((buf[7]! & 0x7f) << 14) | ((buf[8]! & 0x7f) << 7) | (buf[9]! & 0x7f));
+  }
+  for (; i + 3 < buf.length; i++) {
+    if (buf[i] !== 0xff || (buf[i + 1]! & 0xe0) !== 0xe0) continue;
+    const ver = (buf[i + 1]! >> 3) & 3; // 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5
+    const idx = (buf[i + 2]! >> 2) & 3;
+    if (ver === 1 || idx === 3) continue;
+    const base = [44100, 48000, 32000][idx]!;
+    return ver === 3 ? base : ver === 2 ? base / 2 : base / 4;
+  }
+  return null;
+}
+
+// A new dictation line (or its repeat) gets a longer pause before it; every
+// other piece gets a short breath so its first syllable is never clipped.
+const LINE_START = /^(?:repeat\s+)?(?:draw\s+)?line\b/i;
+export function pauseBefore(piece: string, index: number): "short" | "long" {
+  return index > 0 && LINE_START.test(piece) ? "long" : "short";
+}
+
+export function joinWithPauses(pieces: string[], audio: Buffer[]): Buffer {
+  const rate = audio[0] ? mp3SampleRate(audio[0]) : null;
+  const sil = rate ? SILENCE_B64[rate] : undefined;
+  if (!sil) return Buffer.concat(audio);
+  const short = Buffer.from(sil.short, "base64");
+  const long = Buffer.from(sil.long, "base64");
+  const out: Buffer[] = [];
+  audio.forEach((a, i) => {
+    out.push(pauseBefore(pieces[i] ?? "", i) === "long" ? long : short, a);
+  });
+  out.push(short);
+  return Buffer.concat(out);
 }
 
 export const Route = createFileRoute("/api/public/tts")({

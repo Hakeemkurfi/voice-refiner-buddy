@@ -230,6 +230,53 @@ async function gatewayTts(text: string, voice: string, speed: number) {
   return { ok: true, audio: buf } as const;
 }
 
+// Long inputs make the voice models drop words ("skipping"). Every request is
+// split into short pieces (one dictation line or sentence each), each piece is
+// voiced on its own, and the MP3 pieces are joined back in order.
+const PIECE_MAX = 260;
+export function splitForVoice(text: string): string[] {
+  const parts = text
+    .replace(/\s*\n+\s*/g, "\n")
+    .split(/(?<=[.!?])\s+|\n|(?<!Repeat |Repeat draw |draw )(?=\b(?:Repeat )?(?:draw )?line [a-z-]+:)/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  for (const part of parts) {
+    let rest = part;
+    while (rest.length > PIECE_MAX) {
+      const cut = Math.max(rest.lastIndexOf(", ", PIECE_MAX), rest.lastIndexOf(" equals ", PIECE_MAX));
+      const at = cut > 80 ? cut + 1 : rest.lastIndexOf(" ", PIECE_MAX);
+      out.push(rest.slice(0, at > 0 ? at : PIECE_MAX).trim());
+      rest = rest.slice(at > 0 ? at : PIECE_MAX).trim();
+    }
+    if (rest) out.push(rest);
+  }
+  return out;
+}
+
+type Voiced = { ok: true; audio: Buffer } | { ok: false };
+
+async function voicePieces(
+  pieces: string[],
+  one: (t: string) => Promise<Voiced>,
+): Promise<Buffer | null> {
+  const results: (Buffer | null)[] = new Array(pieces.length).fill(null);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed && next < pieces.length) {
+      const i = next++;
+      let r = await one(pieces[i]!);
+      if (!r.ok) r = await one(pieces[i]!); // one retry per piece
+      if (!r.ok) { failed = true; return; }
+      results[i] = r.audio;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, pieces.length) }, worker));
+  if (failed || results.some((b) => !b)) return null;
+  return Buffer.concat(results as Buffer[]);
+}
+
 export const Route = createFileRoute("/api/public/tts")({
   server: {
     handlers: {
@@ -242,7 +289,7 @@ export const Route = createFileRoute("/api/public/tts")({
             voice?: string | number;
             speed?: number;
           };
-          const text = (body.text ?? "").toString().slice(0, 3500);
+          const text = (body.text ?? "").toString().slice(0, 20000);
           if (!text.trim()) {
             return new Response(
               JSON.stringify({ error: "text required" }),
@@ -250,53 +297,48 @@ export const Route = createFileRoute("/api/public/tts")({
             );
           }
 
-          // 1. Tencent Cloud first (your account, no Lovable credits).
-          const tencent = await tencentTts(text, body.voice, body.speed ?? 0.85);
-          if (tencent.ok) {
-            return new Response(tencent.audio, {
+          const pieces = splitForVoice(text);
+          const mp3 = (audio: Buffer) =>
+            new Response(audio, {
               status: 200,
-              headers: {
-                "Content-Type": "audio/mpeg",
-                "Cache-Control": "public, max-age=86400",
-                ...CORS,
-              },
+              headers: { "Content-Type": "audio/mpeg", "Cache-Control": "public, max-age=86400", ...CORS },
             });
-          }
+
+          // 1. Tencent Cloud first (your account, no Lovable credits).
+          let tencent: Awaited<ReturnType<typeof tencentTts>> | undefined;
+          const tAudio = await voicePieces(pieces, async (t) => {
+            const r = await tencentTts(t, body.voice, body.speed ?? 0.85);
+            if (!r.ok) tencent = r;
+            return r.ok ? { ok: true, audio: r.audio } : { ok: false };
+          });
+          if (tAudio) return mp3(tAudio);
 
           // 2. Your own OpenAI account.
-          const openai = await openaiTts(text, String(body.voice ?? "sage"), body.speed ?? 0.85);
-          if (openai.ok) {
-            return new Response(openai.audio, {
-              status: 200,
-              headers: {
-                "Content-Type": "audio/mpeg",
-                "Cache-Control": "public, max-age=86400",
-                ...CORS,
-            },
-            });
-          }
+          let openai: Awaited<ReturnType<typeof openaiTts>> | undefined;
+          const oAudio = await voicePieces(pieces, async (t) => {
+            const r = await openaiTts(t, String(body.voice ?? "sage"), body.speed ?? 0.85);
+            if (!r.ok) openai = r;
+            return r.ok ? { ok: true, audio: r.audio } : { ok: false };
+          });
+          if (oAudio) return mp3(oAudio);
 
           // 3. Lovable AI Gateway last resort.
-          const gateway = await gatewayTts(text, String(body.voice ?? "sage"), body.speed ?? 0.85);
-          if (gateway.ok) {
-            return new Response(gateway.audio, {
-              status: 200,
-              headers: {
-                "Content-Type": "audio/mpeg",
-                "Cache-Control": "public, max-age=86400",
-                ...CORS,
-              },
-            });
-          }
+          let gateway: Awaited<ReturnType<typeof gatewayTts>> | undefined;
+          const gAudio = await voicePieces(pieces, async (t) => {
+            const r = await gatewayTts(t, String(body.voice ?? "sage"), body.speed ?? 0.85);
+            if (!r.ok) gateway = r;
+            return r.ok ? { ok: true, audio: r.audio } : { ok: false };
+          });
+          if (gAudio) return mp3(gAudio);
 
           // All failed — tell the client to fall back to its own voice.
           return new Response(
             JSON.stringify({
               error: "All TTS providers failed",
               fallback: "local",
-              tencentHint: typeof tencent === "object" && "hint" in tencent ? tencent.hint : undefined,
-              openaiHint: typeof openai === "object" && "hint" in openai ? openai.hint : undefined,
-              gatewayHint: typeof gateway === "object" && "hint" in gateway ? gateway.hint : undefined,
+              tencentHint: tencent && "hint" in tencent ? tencent.hint : undefined,
+              openaiHint: openai && "hint" in openai ? openai.hint : undefined,
+              gatewayHint: gateway && "hint" in gateway ? gateway.hint : undefined,
             }),
             { status: 502, headers: { "Content-Type": "application/json", ...CORS } },
           );

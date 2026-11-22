@@ -309,8 +309,12 @@ export function joinWithPauses(pieces: string[], audio: Buffer[]): Buffer {
   const short = Buffer.from(sil.short, "base64");
   const long = Buffer.from(sil.long, "base64");
   const out: Buffer[] = [];
+  // Longer lead-in at the very start: Bluetooth earbuds and audio devices
+  // take about a second to wake, which otherwise swallows the first words.
+  out.push(long, long);
   audio.forEach((a, i) => {
-    out.push(pauseBefore(pieces[i] ?? "", i) === "long" ? long : short, a);
+    if (i > 0) out.push(pauseBefore(pieces[i] ?? "", i) === "long" ? long : short);
+    out.push(a);
   });
   out.push(short);
   return Buffer.concat(out);
@@ -343,7 +347,17 @@ export const Route = createFileRoute("/api/public/tts")({
               headers: { "Content-Type": "audio/mpeg", "Cache-Control": "public, max-age=86400", ...CORS },
             });
 
-          // 1. Tencent Cloud first (your account, no Lovable credits).
+          // 1. Lovable voice first (chosen by the user for exam reliability; uses
+          //    Lovable credits). Tencent / own OpenAI stay as backups below.
+          let gateway: Awaited<ReturnType<typeof gatewayTts>> | undefined;
+          const gAudio = await voicePieces(pieces, async (t) => {
+            const r = await gatewayTts(t, String(body.voice ?? "sage"), body.speed ?? 0.85);
+            if (!r.ok) gateway = r;
+            return r.ok ? { ok: true, audio: r.audio } : { ok: false };
+          });
+          if (gAudio) return mp3(gAudio);
+
+          // 2. Tencent Cloud backup (your account, no Lovable credits).
           let tencent: Awaited<ReturnType<typeof tencentTts>> | undefined;
           const tAudio = await voicePieces(pieces, async (t) => {
             const r = await tencentTts(t, body.voice, body.speed ?? 0.85);
@@ -352,7 +366,7 @@ export const Route = createFileRoute("/api/public/tts")({
           });
           if (tAudio) return mp3(tAudio);
 
-          // 2. Your own OpenAI account.
+          // 3. Your own OpenAI account backup.
           let openai: Awaited<ReturnType<typeof openaiTts>> | undefined;
           const oAudio = await voicePieces(pieces, async (t) => {
             const r = await openaiTts(t, String(body.voice ?? "sage"), body.speed ?? 0.85);
@@ -361,14 +375,6 @@ export const Route = createFileRoute("/api/public/tts")({
           });
           if (oAudio) return mp3(oAudio);
 
-          // 3. Lovable AI Gateway last resort.
-          let gateway: Awaited<ReturnType<typeof gatewayTts>> | undefined;
-          const gAudio = await voicePieces(pieces, async (t) => {
-            const r = await gatewayTts(t, String(body.voice ?? "sage"), body.speed ?? 0.85);
-            if (!r.ok) gateway = r;
-            return r.ok ? { ok: true, audio: r.audio } : { ok: false };
-          });
-          if (gAudio) return mp3(gAudio);
 
           // All failed — tell the client to fall back to its own voice.
           return new Response(

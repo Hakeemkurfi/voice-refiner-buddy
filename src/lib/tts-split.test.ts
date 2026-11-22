@@ -30,5 +30,6 @@ test("pauses are added around every piece in the voice's own sample rate", () =>
   const joined = joinWithPauses(["Line one: a.", "Repeat line one: a."], [piece, piece]);
   const short = Buffer.from(sil.short, "base64").length;
   const long = Buffer.from(sil.long, "base64").length;
-  expect(joined.length).toBe(short + piece.length + long + piece.length + short);
+  // 1.2 s wake-up lead-in, then a long pause before the repeat line
+  expect(joined.length).toBe(long + long + piece.length + long + piece.length + short);
 });

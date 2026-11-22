@@ -379,7 +379,9 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--once":
         print(json.dumps({"answer": run_once()}, indent=2))
     else:
-        if os.environ.get("AXON_PHONE", "1") != "0":
+        # Phone backup relay is OFF by default: background polling can disturb
+        # Bluetooth audio on the Pi Zero. Set AXON_PHONE=1 in axon.env to enable.
+        if os.environ.get("AXON_PHONE", "0") == "1":
             import threading
             threading.Thread(target=phone_listener, daemon=True).start()
         key_loop()

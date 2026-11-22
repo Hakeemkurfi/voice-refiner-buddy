@@ -175,23 +175,13 @@ def _speak_local(text: str) -> None:
     """
     exe = _piper()
     if exe and Path(PIPER_MODEL).exists():
-        piper = subprocess.Popen(
-            [exe, "--model", PIPER_MODEL, "--output_raw"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        play = subprocess.Popen(
-            ["aplay", "-q", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"],
-            stdin=piper.stdout)
-        try:
-            piper.stdin.write(text.encode())
-        finally:
-            for proc in (piper.stdin,):
-                try:
-                    proc.close()
-                except Exception:
-                    pass
-            piper.wait()
-            play.wait()
-        return
+        # Render the whole sentence first, then play: no stutter while piper thinks.
+        wav = Path("/tmp/axon-local.wav")
+        r = subprocess.run([exe, "--model", PIPER_MODEL, "--output_file", str(wav)],
+                           input=text.encode(), capture_output=True)
+        if r.returncode == 0 and wav.exists():
+            subprocess.run(["aplay", "-q", "--buffer-time=500000", str(wav)], check=False)
+            return
     # Basic voice: slower, softer pitch and a gap between words so each
     # dictated step is easy to write down.
     subprocess.run(["espeak-ng", "-v", "en-us+f3", "-s", "135", "-p", "42",

@@ -214,19 +214,29 @@ def _fetch_audio(text: str):
     return r.content
 
 
+_SPEAKING = False
+
+
 def _play_mp3(data: bytes) -> None:
-    # Full file in memory + a playback buffer = smooth audio over Bluetooth,
-    # no skipped words when Wi-Fi is slow.
-    p = subprocess.Popen(["mpg123", "-q", "--buffer", "2048", "--preload", "1", "-"],
-                         stdin=subprocess.PIPE)
+    """Decode the whole MP3 to plain audio first, then play it.
+
+    Decoding while playing made the small Pi CPU fall behind over Bluetooth,
+    which is what caused skipped words. Now playback is just a steady stream.
+    """
+    global _SPEAKING
+    _SPEAKING = True
+    mp3, wav = Path("/tmp/axon-say.mp3"), Path("/tmp/axon-say.wav")
     try:
-        p.stdin.write(data)
+        mp3.write_bytes(data)
+        ok = subprocess.run(["mpg123", "-q", "-w", str(wav), str(mp3)],
+                            capture_output=True).returncode == 0
+        if ok and wav.exists():
+            subprocess.run(["aplay", "-q", "--buffer-time=500000", str(wav)], check=False)
+        else:
+            subprocess.run(["mpg123", "-q", "--buffer", "4096", "--preload", "1", str(mp3)],
+                           check=False)
     finally:
-        try:
-            p.stdin.close()
-        except Exception:
-            pass
-        p.wait()
+        _SPEAKING = False
 
 
 def _speak_one(text: str) -> None:
@@ -303,10 +313,14 @@ def phone_listener() -> None:
     global _speak_lock
     _speak_lock = threading.Lock()
     after = None
+    http = requests.Session()
     while True:
+        if _SPEAKING:
+            time.sleep(1)
+            continue
         try:
             params = {"after": after} if after else {}
-            r = requests.get(f"{BASE}/api/public/pi-say", params=params, timeout=20)
+            r = http.get(f"{BASE}/api/public/pi-say", params=params, timeout=20)
             r.raise_for_status()
             data = r.json()
             if after is None:
@@ -321,7 +335,7 @@ def phone_listener() -> None:
         except Exception as e:
             log(f"phone listener: {str(e)[:100]}")
             time.sleep(10)
-        time.sleep(3)
+        time.sleep(5)
 
 
 def key_loop() -> None:

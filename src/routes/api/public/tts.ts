@@ -299,7 +299,7 @@ export const Route = createFileRoute("/api/public/tts")({
 
           const pieces = splitForVoice(text);
           const mp3 = (audio: Buffer) =>
-            new Response(audio, {
+            new Response(new Uint8Array(audio), {
               status: 200,
               headers: { "Content-Type": "audio/mpeg", "Cache-Control": "public, max-age=86400", ...CORS },
             });

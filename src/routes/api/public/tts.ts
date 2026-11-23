@@ -1,6 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createHash, createHmac } from "crypto";
-import { SILENCE_B64 } from "@/lib/voice-silence";
 
 // Server-side TTS proxy.
 // Priority:
@@ -255,6 +254,15 @@ export function splitForVoice(text: string): string[] {
   return out;
 }
 
+// The voice model reads "Label: text" like a script speaker tag and often
+// drops the label ("Repeat line one:" vanished in 5 of 12 test runs; with a
+// full stop instead of the colon it was spoken 11 of 11 times). So every
+// "word: " becomes "word. " before voicing. Ratios like 2:3 have no space and
+// stay as they are.
+export function voiceText(piece: string): string {
+  return piece.replace(/([A-Za-z0-9)\]])\s*:\s+/g, "$1. ").trim();
+}
+
 type Voiced = { ok: true; audio: Buffer } | { ok: false };
 
 async function voicePieces(
@@ -267,8 +275,9 @@ async function voicePieces(
   const worker = async () => {
     while (!failed && next < pieces.length) {
       const i = next++;
-      let r = await one(pieces[i]!);
-      if (!r.ok) r = await one(pieces[i]!); // one retry per piece
+      const say = voiceText(pieces[i]!);
+      let r = await one(say);
+      if (!r.ok) r = await one(say); // one retry per piece
       if (!r.ok) { failed = true; return; }
       results[i] = r.audio;
     }
@@ -278,8 +287,13 @@ async function voicePieces(
   return joinWithPauses(pieces, results as Buffer[]);
 }
 
-// Sample rate of the first MPEG audio frame (skips an ID3 tag if present).
-export function mp3SampleRate(buf: Uint8Array): number | null {
+type FrameInfo = { at: number; header: Uint8Array; rate: number; length: number; samples: number };
+
+const BITRATES_V1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+const BITRATES_V2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+
+// First MPEG Layer III audio frame (skips an ID3 tag if present).
+export function firstFrame(buf: Uint8Array): FrameInfo | null {
   let i = 0;
   if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33 && buf.length > 10) {
     i = 10 + (((buf[6]! & 0x7f) << 21) | ((buf[7]! & 0x7f) << 14) | ((buf[8]! & 0x7f) << 7) | (buf[9]! & 0x7f));
@@ -287,13 +301,40 @@ export function mp3SampleRate(buf: Uint8Array): number | null {
   for (; i + 3 < buf.length; i++) {
     if (buf[i] !== 0xff || (buf[i + 1]! & 0xe0) !== 0xe0) continue;
     const ver = (buf[i + 1]! >> 3) & 3; // 3 = MPEG1, 2 = MPEG2, 0 = MPEG2.5
+    const layer = (buf[i + 1]! >> 1) & 3; // 1 = Layer III
+    const bi = buf[i + 2]! >> 4;
     const idx = (buf[i + 2]! >> 2) & 3;
-    if (ver === 1 || idx === 3) continue;
+    if (ver === 1 || layer !== 1 || idx === 3 || bi === 0 || bi === 15) continue;
     const base = [44100, 48000, 32000][idx]!;
-    return ver === 3 ? base : ver === 2 ? base / 2 : base / 4;
+    const rate = ver === 3 ? base : ver === 2 ? base / 2 : base / 4;
+    const kbps = (ver === 3 ? BITRATES_V1 : BITRATES_V2)[bi]!;
+    const length = Math.floor(((ver === 3 ? 144000 : 72000) * kbps) / rate);
+    return { at: i, header: buf.slice(i, i + 4), rate, length, samples: ver === 3 ? 1152 : 576 };
   }
   return null;
 }
+
+export function mp3SampleRate(buf: Uint8Array): number | null {
+  return firstFrame(buf)?.rate ?? null;
+}
+
+// Silence built from the voice's own frame header: same MPEG version, sample
+// rate, bitrate and channel mode, so the joined file is one uniform stream
+// (players never see a format change, and duration estimates stay correct).
+// Zero side info + zero main data decodes as digital silence.
+export function silenceLike(audio: Uint8Array, seconds: number): Buffer | null {
+  const f = firstFrame(audio);
+  if (!f) return null;
+  const header = Buffer.from(f.header);
+  header[1] = header[1]! | 0x01; // no CRC
+  header[2] = header[2]! & ~0x02; // no padding byte
+  const frame = Buffer.alloc(f.length);
+  header.copy(frame, 0);
+  const count = Math.max(1, Math.round((seconds * f.rate) / f.samples));
+  return Buffer.concat(Array.from({ length: count }, () => frame));
+}
+
+export const PAUSE_SECONDS = { lead: 1.3, short: 0.4, long: 0.65, tail: 0.4 } as const;
 
 // A new dictation line (or its repeat) gets a longer pause before it; every
 // other piece gets a short breath so its first syllable is never clipped.
@@ -303,20 +344,27 @@ export function pauseBefore(piece: string, index: number): "short" | "long" {
 }
 
 export function joinWithPauses(pieces: string[], audio: Buffer[]): Buffer {
-  const rate = audio[0] ? mp3SampleRate(audio[0]) : null;
-  const sil = rate ? SILENCE_B64[rate] : undefined;
-  if (!sil) return Buffer.concat(audio);
-  const short = Buffer.from(sil.short, "base64");
-  const long = Buffer.from(sil.long, "base64");
+  const first = audio[0];
+  const lead = first ? silenceLike(first, PAUSE_SECONDS.lead) : null;
+  const short = first ? silenceLike(first, PAUSE_SECONDS.short) : null;
+  const long = first ? silenceLike(first, PAUSE_SECONDS.long) : null;
+  const tail = first ? silenceLike(first, PAUSE_SECONDS.tail) : null;
+  if (!lead || !short || !long || !tail) return Buffer.concat(audio);
+  // Strip anything before each piece's first audio frame (ID3 tags etc.)
+  // so only clean frames are joined.
+  const clean = audio.map((a) => {
+    const f = firstFrame(a);
+    return f && f.at > 0 ? a.subarray(f.at) : a;
+  });
   const out: Buffer[] = [];
   // Longer lead-in at the very start: Bluetooth earbuds and audio devices
   // take about a second to wake, which otherwise swallows the first words.
-  out.push(long, long);
-  audio.forEach((a, i) => {
+  out.push(lead);
+  clean.forEach((a, i) => {
     if (i > 0) out.push(pauseBefore(pieces[i] ?? "", i) === "long" ? long : short);
     out.push(a);
   });
-  out.push(short);
+  out.push(tail);
   return Buffer.concat(out);
 }
 

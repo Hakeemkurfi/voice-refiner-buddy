@@ -1,3 +1,4 @@
 # Architecture rules
 - Keep advanced math dictation constraints and repetition normalization in one browser-safe module used by both answer surfaces, so Pi and web rules stay aligned.
-- Seed curated reference documents with literal migration inserts and retain page references; independently verify handwritten worked answers before treating them as guidance.- Voice audio is generated in short pieces and joined with pre-encoded silent MP3 runs matching the voice's sample rate, so joins never clip a first syllable or confuse players.
+- Keep curated reference documents as markdown under public/study-packs and index them into the resource library one item per chunk with embeddings, retaining page references; independently verify worked answers before treating them as guidance.
+- Voice audio is generated in short pieces, with "Label:" colons spoken as full stops (the voice model drops colon labels), and joined with silent frames cloned from the voice's own frame header, so the file is one uniform stream.

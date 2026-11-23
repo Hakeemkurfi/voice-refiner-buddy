@@ -8,6 +8,13 @@
       "when": 1795098852067,
       "tag": "0000_allow_pi_say_events",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795443771880,
+      "tag": "0001_migration",
+      "breakpoints": true
     }
   ]
 }

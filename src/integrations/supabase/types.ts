@@ -139,6 +139,126 @@ export type Database = {
         }
         Relationships: []
       }
+      pi_answers: {
+        Row: {
+          boot_session_id: string | null
+          capture_sequence: number
+          capture_token: string
+          created_at: string
+          device_id: string
+          error: string | null
+          event_cursor: number
+          question_id: string
+          revision: number
+          sections: Json
+          status: string
+          title: string | null
+          updated_at: string
+          voice: string | null
+        }
+        Insert: {
+          boot_session_id?: string | null
+          capture_sequence: number
+          capture_token: string
+          created_at?: string
+          device_id: string
+          error?: string | null
+          event_cursor?: number
+          question_id?: string
+          revision?: number
+          sections?: Json
+          status?: string
+          title?: string | null
+          updated_at?: string
+          voice?: string | null
+        }
+        Update: {
+          boot_session_id?: string | null
+          capture_sequence?: number
+          capture_token?: string
+          created_at?: string
+          device_id?: string
+          error?: string | null
+          event_cursor?: number
+          question_id?: string
+          revision?: number
+          sections?: Json
+          status?: string
+          title?: string | null
+          updated_at?: string
+          voice?: string | null
+        }
+        Relationships: []
+      }
+      pi_commands: {
+        Row: {
+          action: string
+          created_at: string
+          device_id: string
+          id: number
+          question_id: string | null
+        }
+        Insert: {
+          action: string
+          created_at?: string
+          device_id: string
+          id?: number
+          question_id?: string | null
+        }
+        Update: {
+          action?: string
+          created_at?: string
+          device_id?: string
+          id?: number
+          question_id?: string | null
+        }
+        Relationships: []
+      }
+      pi_devices: {
+        Row: {
+          capture_seq: number
+          created_at: string
+          device_id: string
+          paired_at: string | null
+          token_hash: string | null
+        }
+        Insert: {
+          capture_seq?: number
+          created_at?: string
+          device_id: string
+          paired_at?: string | null
+          token_hash?: string | null
+        }
+        Update: {
+          capture_seq?: number
+          created_at?: string
+          device_id?: string
+          paired_at?: string | null
+          token_hash?: string | null
+        }
+        Relationships: []
+      }
+      pi_pair_codes: {
+        Row: {
+          code_hash: string
+          created_at: string
+          device_id: string
+          expires_at: string
+        }
+        Insert: {
+          code_hash: string
+          created_at?: string
+          device_id: string
+          expires_at: string
+        }
+        Update: {
+          code_hash?: string
+          created_at?: string
+          device_id?: string
+          expires_at?: string
+        }
+        Relationships: []
+      }
       resource_chunks: {
         Row: {
           chunk_index: number
@@ -256,6 +376,7 @@ export type Database = {
           title: string
         }[]
       }
+      pi_next_capture: { Args: { _device: string }; Returns: number }
     }
     Enums: {
       [_ in never]: never

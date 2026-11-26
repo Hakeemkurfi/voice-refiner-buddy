@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { analyzeImage } from "@/lib/analyze.functions";
 import { useTtsQueue } from "@/hooks/use-tts-queue";
+import { PiPhonePlayer } from "@/components/pi-phone-player";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -55,7 +56,11 @@ type EventRow = {
 };
 
 function Index() {
-  const tts = useTtsQueue();
+  const [phoneOutput, setPhoneOutput] = useState(false);
+  useEffect(() => {
+    setPhoneOutput(localStorage.getItem("axon-phone-output") === "1");
+  }, []);
+  const tts = useTtsQueue({ mediaSession: !phoneOutput });
   const {
     addItem,
     speakNow,
@@ -802,6 +807,15 @@ function Index() {
             </Button>
           </div>
         </Card>
+
+        <PiPhonePlayer
+          enabled={phoneOutput}
+          onEnabledChange={(v) => {
+            setPhoneOutput(v);
+            localStorage.setItem("axon-phone-output", v ? "1" : "0");
+            if (v) stopTts();
+          }}
+        />
 
         <Card className="p-4">
           <div className="flex items-start gap-3 mb-3">

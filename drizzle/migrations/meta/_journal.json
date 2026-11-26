@@ -15,6 +15,13 @@
       "when": 1795443771880,
       "tag": "0001_migration",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795708411871,
+      "tag": "0002_pi_phone_audio_relay",
+      "breakpoints": true
     }
   ]
 }

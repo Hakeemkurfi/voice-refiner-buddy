@@ -7,7 +7,8 @@ export type TtsItem = { id: string; title: string; steps: string[] };
 // survives screen-lock on iOS and Android. SpeechSynthesis is kept as a
 // fallback only when the network call fails (e.g. offline preview).
 
-export function useTtsQueue() {
+export function useTtsQueue(opts?: { mediaSession?: boolean }) {
+  const mediaSessionOn = opts?.mediaSession ?? true;
   const [items, setItems] = useState<TtsItem[]>([]);
   const [currentItemIdx, setCurrentItemIdx] = useState(0);
   const [stepIdx, setStepIdx] = useState(0);
@@ -255,6 +256,7 @@ export function useTtsQueue() {
 
   // Media Session — lock-screen / earbud / Bluetooth-ring controls
   useEffect(() => {
+    if (!mediaSessionOn) return; // Phone Audio Mode owns the lock-screen controls
     if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
     const ms = navigator.mediaSession;
     const cur = items[currentItemIdx];
@@ -273,7 +275,7 @@ export function useTtsQueue() {
     bind("previoustrack", prev);
     bind("seekbackward", prev);
     bind("seekforward", next);
-  }, [items, currentItemIdx, stepIdx, speaking, next, prev, replay, stop, pauseResume]);
+  }, [mediaSessionOn, items, currentItemIdx, stepIdx, speaking, next, prev, replay, stop, pauseResume]);
 
   return {
     items,

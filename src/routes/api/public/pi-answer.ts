@@ -23,8 +23,8 @@ function randomHex(bytes: number) {
   return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 function piKeyOk(request: Request) {
-  const expected = process.env["AXON_PI_KEY"];
-  const got = request.headers.get("x-axon-pi-key") ?? "";
+  const expected = (process.env["AXON_PI_KEY"] ?? "").trim().replace(/^AXON_PI_KEY=/, "").replace(/^["']|["']$/g, "");
+  const got = (request.headers.get("x-axon-pi-key") ?? "").trim();
   return !!expected && expected.length >= 16 && constantTimeEqual(got, expected);
 }
 async function admin() {

@@ -344,6 +344,9 @@ export function PiPhonePlayer({ enabled, onEnabledChange }: { enabled: boolean; 
       {enabled && !token && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">Enter the 6-digit pairing code from your Pi.</p>
+          <p className="text-xs text-muted-foreground">
+            Your Pi creates this code only after its Phone Audio Mode update. This switch does not update or configure the Pi.
+          </p>
           <div className="flex gap-2">
             <Input inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} placeholder="123456" />
             <Button onClick={pair} disabled={code.length !== 6}>Pair phone</Button>

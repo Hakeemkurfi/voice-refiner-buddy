@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PHONE_VOICE_RATE } from "@/lib/photo-batch";
 
 export type TtsItem = { id: string; title: string; steps: string[] };
 
@@ -30,10 +31,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
   const [stepIdx, setStepIdx] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const [playbackBlocked, setPlaybackBlocked] = useState(false);
-  // 0.9 = calm, conversational tutor pace. User asked for ~50% slower than the
-  // robotic SpeechSynthesis default; with the OpenAI voice 0.9 sounds natural
-  // and very dictation-friendly.
-  const [rate, setRate] = useState(1.0);
+  const [rate, setRate] = useState(PHONE_VOICE_RATE);
   const [voice] = useState<string>("sage");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -42,6 +40,8 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
   const stepIdxRef = useRef(0);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
   const tokenRef = useRef(0); // cancels stale playbacks
+  const itemsRef = useRef<TtsItem[]>([]);
+  const runningRef = useRef(false);
   // Voice clips fetched ahead of time (next line loads while this one plays),
   // each retried so one network hiccup does not stop the answer mid-way.
   const voiceCacheRef = useRef(new Map<string, Promise<Blob>>());
@@ -221,16 +221,19 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
       const flat = flatRef.current;
       const start = findFlatIdx(ii, si);
       if (start < 0) return;
+      runningRef.current = true;
       const playIdx = (k: number) => {
-        if (k >= flat.length) return;
-        const cur = flat[k];
+        // New answers may arrive while this line plays. Never capture an old tail.
+        const currentFlat = flatRef.current;
+        if (k >= currentFlat.length) { runningRef.current = false; return; }
+        const cur = currentFlat[k];
         if (!cur) return;
         currentItemIdxRef.current = cur.itemIdx;
         stepIdxRef.current = cur.stepIdx;
         setCurrentItemIdx(cur.itemIdx);
         setStepIdx(cur.stepIdx);
         speak(cur.text, () => playIdx(k + 1));
-        const nxt = flat[k + 1];
+        const nxt = currentFlat[k + 1];
         if (nxt) void fetchVoice(nxt.text).catch(() => undefined);
       };
       playIdx(start);
@@ -240,30 +243,27 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
 
   const addItem = useCallback(
     (item: TtsItem, autoPlay = true) => {
-      setItems((prev) => {
-        const next = [...prev, item];
-        if (autoPlay) {
-          setTimeout(() => {
-            const newIi = next.length - 1;
-            currentItemIdxRef.current = newIi;
-            stepIdxRef.current = 0;
-            setCurrentItemIdx(newIi);
-            setStepIdx(0);
-            const flat: { itemIdx: number; stepIdx: number; text: string }[] = [];
-            next.forEach((it, i) => it.steps.forEach((s, j) => flat.push({ itemIdx: i, stepIdx: j, text: s })));
-            flatRef.current = flat;
-            playFrom(newIi, 0);
-          }, 50);
-        }
-        return next;
-      });
+      const next = [...itemsRef.current, item];
+      itemsRef.current = next;
+      flatRef.current = next.flatMap((it, itemIdx) => it.steps.map((text, stepIdx) => ({ itemIdx, stepIdx, text })));
+      setItems(next);
+      if (autoPlay) playFrom(next.length - 1, 0);
     },
     [playFrom],
   );
 
+  const enqueueItem = useCallback((item: TtsItem) => {
+    const newIndex = itemsRef.current.length;
+    addItem(item, false);
+    // During playback (including voice download) leave the current line alone.
+    // Explicit pause/stop and autoplay rejection must also remain respected.
+    if (!runningRef.current && !manualStopRef.current) playFrom(newIndex, 0);
+  }, [addItem, playFrom]);
+
   const speakNow = useCallback((text: string) => speak(text), [speak]);
 
   const stop = useCallback(() => {
+    runningRef.current = false;
     manualStopRef.current = true;
     tokenRef.current++;
     try {
@@ -383,6 +383,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     rate,
     setRate,
     addItem,
+    enqueueItem,
     speakNow,
     unlockAudio,
     next,

@@ -46,8 +46,6 @@ export const Route = createRootRoute({
       { name: "twitter:site", content: "@Lovable" },
       { name: "twitter:title", content: "Axon Dynamics — Neurotechnology Research & Innovation" },
       { name: "twitter:description", content: "Axon Dynamics is a research and innovation company advancing neurotechnology — building intelligent systems that bridge brain-computer interfaces, AI vision, and real-time neural decoding for science and assistive applications." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/0185ac04-0d2a-4206-b0ff-0d58f00b6ada/id-preview-fb384060--f2f7f3b4-222e-468d-8016-13a5b4541c9b.lovable.app-1781186585394.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/0185ac04-0d2a-4206-b0ff-0d58f00b6ada/id-preview-fb384060--f2f7f3b4-222e-468d-8016-13a5b4541c9b.lovable.app-1781186585394.png" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },

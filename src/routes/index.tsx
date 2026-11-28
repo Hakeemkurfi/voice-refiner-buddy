@@ -2,7 +2,8 @@ import React from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { analyzeImage } from "@/lib/analyze.functions";
+import { analyzeImage, inventoryPhotoQuestions } from "@/lib/analyze.functions";
+import { solvePhotoQuestions, type PhotoQuestion } from "@/lib/photo-batch";
 import { useTtsQueue } from "@/hooks/use-tts-queue";
 import { PiPhonePlayer } from "@/components/pi-phone-player";
 import { InstantCamera } from "@/components/instant-camera";
@@ -73,9 +74,11 @@ function Index() {
     unlockAudio: unlockTtsAudio,
   } = tts;
   const analyze = useServerFn(analyzeImage);
+  const inventoryQuestions = useServerFn(inventoryPhotoQuestions);
   const [realtimeOnline, setRealtimeOnline] = useState(false);
   const [serverReachable, setServerReachable] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
   const [lastImage, setLastImage] = useState<string | null>(null);
   const [sendToPi, setSendToPi] = useState(false);
   const sendToPiRef = useRef(false);
@@ -147,8 +150,8 @@ function Index() {
   }, [contextText]);
 
   useEffect(() => {
-    busyRef.current = busy;
-  }, [busy]);
+    busyRef.current = busy || batchBusy;
+  }, [busy, batchBusy]);
 
   const sayStatus = useCallback(
     (message: string) => {
@@ -478,6 +481,86 @@ function Index() {
   };
 
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [batchCamera, setBatchCamera] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number; pages: number } | null>(null);
+  const batchWorkRef = useRef<{ images: string[]; questions: PhotoQuestion[] | null; next: number; context: string; toPi: boolean; speech: string[] } | null>(null);
+  const [batchFailed, setBatchFailed] = useState(false);
+
+  const runPhotoBatch = async () => {
+    const work = batchWorkRef.current;
+    if (!work) return;
+    setBatchBusy(true);
+    setBatchFailed(false);
+    setError(null);
+    try {
+      if (!work.questions) {
+        setStatus(`Reading all ${work.images.length} pages…`);
+        const result = await inventoryQuestions({ data: { images_b64: work.images } });
+        work.questions = result.questions;
+      }
+      const questions = work.questions;
+      setBatchProgress({ done: work.next, total: questions.length, pages: work.images.length });
+      const offset = work.next;
+      await solvePhotoQuestions(questions.slice(offset), async (question, index) => {
+        setStatus(`Solving ${question.label} (${offset + index + 1} of ${questions.length})…`);
+        const images = question.pages.flatMap((page) => {
+          const image = work.images[page - 1];
+          return image ? [image] : [];
+        });
+        const result = await analyze({ data: {
+          images_b64: images,
+          batchQuestion: question.text,
+          contextText: work.context,
+          model: "deepseek",
+        } });
+        if (!result.steps.length) throw new Error(`${question.label} did not return an answer.`);
+        return result;
+      }, (out, question, index) => {
+        const item = { id: crypto.randomUUID(), title: question.label, steps: out.steps };
+        if (work.toPi) { addItem(item, false); work.speech.push(out.steps.join("\n")); }
+        else tts.enqueueItem(item);
+        work.next = offset + index + 1;
+        hasPriorResultRef.current = true;
+        setExtracted(out.extractedText ?? "");
+        setUsedModel(out.modelUsed);
+        setBatchProgress({ done: work.next, total: questions.length, pages: work.images.length });
+      });
+      if (work.toPi) {
+        const response = await fetch("/api/public/pi-say", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: work.speech.join("\n\n") }),
+        });
+        if (!response.ok) throw new Error("Answers are ready but could not be sent to the Pi.");
+      }
+      setStatus(work.toPi ? "All answers sent to your Pi." : `All ${questions.length} answers are ready. Listening in question order.`);
+      batchWorkRef.current = null;
+    } catch (e) {
+      setBatchFailed(true);
+      setError(`Pages kept for retry. ${(e as Error).message}`);
+    } finally {
+      setBatchBusy(false);
+    }
+  };
+
+  const onPickPhotos = async (files: File[]) => {
+    if (!files.length) return;
+    setBatchBusy(true);
+    setBatchProgress(null);
+    setBatchFailed(false);
+    setError(null);
+    try {
+      setStatus(`Preparing ${files.length} pages…`);
+      // Convert sequentially to avoid several full-resolution canvases in memory.
+      const images: string[] = [];
+      for (const file of files) images.push(await fileToBase64(file));
+      batchWorkRef.current = { images, questions: null, next: 0, context: contextRef.current, toPi: sendToPiRef.current, speech: [] };
+      await runPhotoBatch();
+    } catch (e) {
+      setError(`Photo upload failed: ${(e as Error).message}`);
+      setBatchBusy(false);
+    }
+  };
   const onPickPhoto = async (file: File | null, useProModel = false) => {
     if (!file) return;
     try {
@@ -845,19 +928,24 @@ function Index() {
             Speak the answer on my Pi earbuds (phone stays silent)
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
+            <Button
               type="button"
-              disabled={busy}
-              className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent disabled:opacity-50"
-              onClick={() => { void prepareAudio(); setCameraOpen(true); }}
+              variant="outline"
+              disabled={busy || batchBusy}
+              onClick={() => { void prepareAudio(); setBatchCamera(false); setCameraOpen(true); }}
             >
               <Camera className="h-4 w-4" />
               Take photo
-            </button>
+            </Button>
+            <Button variant="outline" disabled={busy || batchBusy} onClick={() => {
+              void prepareAudio(); setBatchCamera(true); setCameraOpen(true);
+            }}><Layers className="h-4 w-4" /> Take several pages</Button>
             {cameraOpen && (
               <InstantCamera
+                batch={batchCamera}
                 onClose={() => setCameraOpen(false)}
                 onShot={(file) => { setCameraOpen(false); void onPickPhoto(file); }}
+                onBatch={(files) => { setCameraOpen(false); void onPickPhotos(files); }}
               />
             )}
             <label
@@ -865,19 +953,25 @@ function Index() {
               onClick={() => { void prepareAudio(); }}
             >
               <Layers className="h-4 w-4" />
-              Upload from gallery
+              Upload photos
               <input
                 type="file"
                 accept="image/*"
+                multiple
                 className="hidden"
-                disabled={busy}
+                disabled={busy || batchBusy}
                 onChange={(e) => {
-                  onPickPhoto(e.target.files?.[0] ?? null);
+                  void onPickPhotos(Array.from(e.target.files ?? []));
                   e.target.value = "";
                 }}
               />
             </label>
           </div>
+          {batchBusy && !batchProgress && <p role="status" className="mt-3 text-sm text-muted-foreground">Preparing your pages…</p>}
+          {batchProgress && <p role="status" className="mt-3 text-sm tabular-nums">{batchProgress.pages} pages · {batchProgress.done} / {batchProgress.total} answers ready</p>}
+          {batchFailed && <Button variant="outline" className="mt-3 gap-2" onClick={() => { void runPhotoBatch(); }}>
+            <RefreshCw className="h-4 w-4" /> Retry remaining questions
+          </Button>}
           <p className="text-[10px] text-muted-foreground mt-2">
             The full solution uses your usual numbered lines and exact repeats. Voice starts automatically when ready;
             if your phone blocks it, use Play answer below.

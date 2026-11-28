@@ -491,6 +491,7 @@ function Index() {
     if (!work) return;
     setBatchBusy(true);
     setBatchFailed(false);
+    if (!work.toPi) tts.announce(`Solving in progress. ${work.images.length} page${work.images.length === 1 ? "" : "s"} received.`);
     setError(null);
     try {
       if (!work.questions) {
@@ -503,6 +504,7 @@ function Index() {
       const offset = work.next;
       await solvePhotoQuestions(questions.slice(offset), async (question, index) => {
         setStatus(`Solving ${question.label} (${offset + index + 1} of ${questions.length})…`);
+        if (!work.toPi && index === 0) tts.announce("Still solving. The first answer is almost ready.");
         const images = question.pages.flatMap((page) => {
           const image = work.images[page - 1];
           return image ? [image] : [];

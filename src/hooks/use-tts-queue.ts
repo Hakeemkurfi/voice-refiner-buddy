@@ -42,6 +42,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
   const tokenRef = useRef(0); // cancels stale playbacks
   const itemsRef = useRef<TtsItem[]>([]);
   const runningRef = useRef(false);
+  const pendingRef = useRef(false); // a voice clip is downloading for the current line
   // Voice clips fetched ahead of time (next line loads while this one plays),
   // each retried so one network hiccup does not stop the answer mid-way.
   const voiceCacheRef = useRef(new Map<string, Promise<Blob>>());
@@ -164,8 +165,10 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
       const audio = ensureAudio();
       if (!audio) return fallbackToSpeech();
 
+      pendingRef.current = true;
       fetchVoice(text)
         .then(async (blob) => {
+          if (myToken === tokenRef.current) pendingRef.current = false;
           if (myToken !== tokenRef.current) return;
           const url = URL.createObjectURL(blob);
           audio.src = url;
@@ -197,6 +200,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
             // Autoplay rejection needs another real tap. SpeechSynthesis is
             // blocked by the same policy and can silently stall the queue.
             if ((error as DOMException).name === "NotAllowedError") {
+              runningRef.current = false;
               setPlaybackBlocked(true);
               return;
             }
@@ -204,6 +208,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
           }
         })
         .catch(() => {
+          if (myToken === tokenRef.current) pendingRef.current = false;
           // A temporary voice-service failure must not disable backend audio
           // for every later line. Try the good voice again on the next step.
           fallbackToSpeech();
@@ -257,8 +262,19 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     addItem(item, false);
     // During playback (including voice download) leave the current line alone.
     // Explicit pause/stop and autoplay rejection must also remain respected.
-    if (!runningRef.current && !manualStopRef.current) playFrom(newIndex, 0);
+    // Also recover a stalled queue: "running" but nothing playing or loading.
+    const a = audioRef.current;
+    const speechBusy = typeof window !== "undefined" && "speechSynthesis" in window && window.speechSynthesis.speaking;
+    const stalled = runningRef.current && !pendingRef.current && (!a || a.paused) && !speechBusy;
+    if ((!runningRef.current || stalled) && !manualStopRef.current) playFrom(newIndex, 0);
   }, [addItem, playFrom]);
+
+  // Short status line ("Solving in progress") that keeps the phone's player
+  // active during long solving. Never interrupts an answer already playing.
+  const announce = useCallback((text: string) => {
+    if (runningRef.current) return;
+    speak(text);
+  }, [speak]);
 
   const speakNow = useCallback((text: string) => speak(text), [speak]);
 
@@ -385,6 +401,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     addItem,
     enqueueItem,
     speakNow,
+    announce,
     unlockAudio,
     next,
     prev,

@@ -42,6 +42,9 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
   const stepIdxRef = useRef(0);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
   const tokenRef = useRef(0); // cancels stale playbacks
+  // Voice clips fetched ahead of time (next line loads while this one plays),
+  // each retried so one network hiccup does not stop the answer mid-way.
+  const voiceCacheRef = useRef(new Map<string, Promise<Blob>>());
 
   useEffect(() => {
     currentItemIdxRef.current = currentItemIdx;
@@ -70,6 +73,44 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     }
     return audioRef.current;
   }, []);
+
+  const fetchVoice = useCallback(
+    (text: string): Promise<Blob> => {
+      const key = `${voice}|${rate}|${text}`;
+      const cache = voiceCacheRef.current;
+      const hit = cache.get(key);
+      if (hit) return hit;
+      const attempt = async (): Promise<Blob> => {
+        let lastErr: unknown;
+        for (let i = 0; i < 4; i++) {
+          try {
+            const res = await fetch("/api/public/tts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text, voice, speed: rate }),
+            });
+            if (!res.ok) throw new Error(`tts ${res.status}`);
+            const blob = await res.blob();
+            if (blob.size < 200) throw new Error("empty voice clip");
+            return blob;
+          } catch (e) {
+            lastErr = e;
+            await new Promise((r) => setTimeout(r, 600 * (i + 1)));
+          }
+        }
+        throw lastErr;
+      };
+      const p = attempt();
+      p.catch(() => cache.delete(key));
+      cache.set(key, p);
+      if (cache.size > 40) {
+        const first = cache.keys().next().value;
+        if (first !== undefined) cache.delete(first);
+      }
+      return p;
+    },
+    [voice, rate],
+  );
 
   const unlockAudio = useCallback(async (): Promise<boolean> => {
     const audio = ensureAudio();
@@ -123,14 +164,8 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
       const audio = ensureAudio();
       if (!audio) return fallbackToSpeech();
 
-      fetch("/api/public/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice, speed: rate }),
-      })
-        .then(async (res) => {
-          if (!res.ok) throw new Error(`tts ${res.status}`);
-          const blob = await res.blob();
+      fetchVoice(text)
+        .then(async (blob) => {
           if (myToken !== tokenRef.current) return;
           const url = URL.createObjectURL(blob);
           audio.src = url;
@@ -174,7 +209,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
           fallbackToSpeech();
         });
     },
-    [rate, voice, ensureAudio],
+    [rate, ensureAudio, fetchVoice],
   );
 
   const findFlatIdx = useCallback((ii: number, si: number) => {
@@ -195,10 +230,12 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
         setCurrentItemIdx(cur.itemIdx);
         setStepIdx(cur.stepIdx);
         speak(cur.text, () => playIdx(k + 1));
+        const nxt = flat[k + 1];
+        if (nxt) void fetchVoice(nxt.text).catch(() => undefined);
       };
       playIdx(start);
     },
-    [findFlatIdx, speak],
+    [findFlatIdx, speak, fetchVoice],
   );
 
   const addItem = useCallback(

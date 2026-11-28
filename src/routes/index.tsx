@@ -5,6 +5,7 @@ import { useServerFn } from "@tanstack/react-start";
 import { analyzeImage } from "@/lib/analyze.functions";
 import { useTtsQueue } from "@/hooks/use-tts-queue";
 import { PiPhonePlayer } from "@/components/pi-phone-player";
+import { InstantCamera } from "@/components/instant-camera";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -476,6 +477,7 @@ function Index() {
     return jpeg.split(",")[1] ?? "";
   };
 
+  const [cameraOpen, setCameraOpen] = useState(false);
   const onPickPhoto = async (file: File | null, useProModel = false) => {
     if (!file) return;
     try {
@@ -843,24 +845,21 @@ function Index() {
             Speak the answer on my Pi earbuds (phone stays silent)
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <label
-              className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent"
-              onClick={() => { void prepareAudio(); }}
+            <button
+              type="button"
+              disabled={busy}
+              className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent disabled:opacity-50"
+              onClick={() => { void prepareAudio(); setCameraOpen(true); }}
             >
               <Camera className="h-4 w-4" />
               Take photo
-              <input
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                disabled={busy}
-                onChange={(e) => {
-                  onPickPhoto(e.target.files?.[0] ?? null);
-                  e.target.value = "";
-                }}
+            </button>
+            {cameraOpen && (
+              <InstantCamera
+                onClose={() => setCameraOpen(false)}
+                onShot={(file) => { setCameraOpen(false); void onPickPhoto(file); }}
               />
-            </label>
+            )}
             <label
               className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent"
               onClick={() => { void prepareAudio(); }}

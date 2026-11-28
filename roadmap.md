@@ -11,3 +11,4 @@
 - [x] Phone Audio Mode website side (relay, pairing, part-by-part phone player)
 - [x] Phone Audio Mode pairing/setup guide for the Pi assistant and owner.
 - [ ] Phone Audio Mode Pi side (phone_output.py + main.py branch) — waiting on the Pi assistant's verified backup and integration report
+- [x] Phone camera/upload answers unlock the real player on the photo tap, auto-play with repeated dictation, and offer Play answer if blocked.

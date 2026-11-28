@@ -2,17 +2,34 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type TtsItem = { id: string; title: string; steps: string[] };
 
-// TTS hook that plays REAL audio bytes from /api/public/tts (OpenAI mp3 via
-// Lovable AI Gateway). Played through a single HTMLAudioElement so playback
-// survives screen-lock on iOS and Android. SpeechSynthesis is kept as a
-// fallback only when the network call fails (e.g. offline preview).
+// A silent anchor played by the SAME audio element during a real screen tap.
+// iPhone browsers then allow that element to start the answer after the slow
+// photo-solving request finishes. A separate temporary Audio object does not
+// reliably unlock this queue's player.
+export const SILENT_AUDIO_ANCHOR =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
 
+export async function primeAudioElement(audio: HTMLAudioElement): Promise<void> {
+  audio.onplay = null;
+  audio.onended = null;
+  audio.onerror = null;
+  audio.src = SILENT_AUDIO_ANCHOR;
+  audio.playbackRate = 1;
+  await audio.play();
+  audio.pause();
+  audio.currentTime = 0;
+}
+
+// TTS hook that plays REAL audio bytes from /api/public/tts. A single
+// HTMLAudioElement preserves lock-screen playback and earbud media controls.
+// Browser speech remains a fallback for voice-service/network failures only.
 export function useTtsQueue(opts?: { mediaSession?: boolean }) {
   const mediaSessionOn = opts?.mediaSession ?? true;
   const [items, setItems] = useState<TtsItem[]>([]);
   const [currentItemIdx, setCurrentItemIdx] = useState(0);
   const [stepIdx, setStepIdx] = useState(0);
   const [speaking, setSpeaking] = useState(false);
+  const [playbackBlocked, setPlaybackBlocked] = useState(false);
   // 0.9 = calm, conversational tutor pace. User asked for ~50% slower than the
   // robotic SpeechSynthesis default; with the OpenAI voice 0.9 sounds natural
   // and very dictation-friendly.
@@ -25,7 +42,6 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
   const stepIdxRef = useRef(0);
   const flatRef = useRef<{ itemIdx: number; stepIdx: number; text: string }[]>([]);
   const tokenRef = useRef(0); // cancels stale playbacks
-  const useBackendTtsRef = useRef(true); // real MP3 audio for lock-screen playback + seeking
 
   useEffect(() => {
     currentItemIdxRef.current = currentItemIdx;
@@ -55,6 +71,25 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     return audioRef.current;
   }, []);
 
+  const unlockAudio = useCallback(async (): Promise<boolean> => {
+    const audio = ensureAudio();
+    if (!audio) return false;
+    tokenRef.current++; // cancel any older status announcement or answer
+    manualStopRef.current = true;
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    try {
+      await primeAudioElement(audio);
+      manualStopRef.current = false;
+      setSpeaking(false);
+      setPlaybackBlocked(false);
+      return true;
+    } catch {
+      setSpeaking(false);
+      setPlaybackBlocked(true);
+      return false;
+    }
+  }, [ensureAudio]);
+
   // Speak via backend MP3 (preferred) with SpeechSynthesis fallback.
   const speak = useCallback(
     (text: string, onEnd?: () => void) => {
@@ -64,13 +99,19 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
 
       const fallbackToSpeech = () => {
         if (myToken !== tokenRef.current) return;
-        if (!("speechSynthesis" in window)) return;
+        if (!("speechSynthesis" in window)) {
+          setPlaybackBlocked(true);
+          return;
+        }
         window.speechSynthesis.cancel();
         const u = new SpeechSynthesisUtterance(text);
         u.rate = rate;
         u.pitch = 1;
         u.lang = "en-US";
-        u.onstart = () => setSpeaking(true);
+        u.onstart = () => {
+          setPlaybackBlocked(false);
+          setSpeaking(true);
+        };
         u.onend = () => {
           setSpeaking(false);
           if (!manualStopRef.current && onEnd) onEnd();
@@ -81,7 +122,6 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
 
       const audio = ensureAudio();
       if (!audio) return fallbackToSpeech();
-      if (!useBackendTtsRef.current) return fallbackToSpeech();
 
       fetch("/api/public/tts", {
         method: "POST",
@@ -96,7 +136,10 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
           audio.src = url;
           audio.playbackRate = 1; // server already applied speed
           audio.onplay = () => {
-            if (myToken === tokenRef.current) setSpeaking(true);
+            if (myToken === tokenRef.current) {
+              setPlaybackBlocked(false);
+              setSpeaking(true);
+            }
           };
           audio.onended = () => {
             URL.revokeObjectURL(url);
@@ -112,12 +155,22 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
           };
           try {
             await audio.play();
-          } catch {
+          } catch (error) {
+            URL.revokeObjectURL(url);
+            if (myToken !== tokenRef.current) return;
+            setSpeaking(false);
+            // Autoplay rejection needs another real tap. SpeechSynthesis is
+            // blocked by the same policy and can silently stall the queue.
+            if ((error as DOMException).name === "NotAllowedError") {
+              setPlaybackBlocked(true);
+              return;
+            }
             fallbackToSpeech();
           }
         })
         .catch(() => {
-          useBackendTtsRef.current = false;
+          // A temporary voice-service failure must not disable backend audio
+          // for every later line. Try the good voice again on the next step.
           fallbackToSpeech();
         });
     },
@@ -136,6 +189,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
       const playIdx = (k: number) => {
         if (k >= flat.length) return;
         const cur = flat[k];
+        if (!cur) return;
         currentItemIdxRef.current = cur.itemIdx;
         stepIdxRef.current = cur.stepIdx;
         setCurrentItemIdx(cur.itemIdx);
@@ -222,6 +276,7 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
       return;
     }
     const p = flat[k - 1];
+    if (!p) return;
     stop();
     setTimeout(() => playFrom(p.itemIdx, p.stepIdx), 80);
   }, [findFlatIdx, stop, playFrom]);
@@ -230,8 +285,10 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     const ii = currentItemIdxRef.current;
     const si = stepIdxRef.current;
     stop();
-    setTimeout(() => playFrom(ii, si), 80);
-  }, [stop, playFrom]);
+    // This also serves as the visible "Play answer" recovery after an iPhone
+    // autoplay rejection: prime the real player during this button tap.
+    void unlockAudio().then(() => playFrom(ii, si));
+  }, [stop, unlockAudio, playFrom]);
 
   // Pause / resume without destroying position — used by lock-screen play/pause
   // and the "stop / continue" ring button.
@@ -245,14 +302,17 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     }
     if (a && a.src && a.currentTime > 0 && a.currentTime < (a.duration || Infinity)) {
       manualStopRef.current = false;
-      a.play().then(() => setSpeaking(true)).catch(() => { /* ignore */ });
+      a.play().then(() => {
+        setPlaybackBlocked(false);
+        setSpeaking(true);
+      }).catch(() => setPlaybackBlocked(true));
       return;
     }
-    // Nothing paused — replay current step
+    // Nothing paused — replay current step using an unlocked player.
     const ii = currentItemIdxRef.current;
     const si = stepIdxRef.current;
-    setTimeout(() => playFrom(ii, si), 60);
-  }, [playFrom]);
+    void unlockAudio().then(() => playFrom(ii, si));
+  }, [playFrom, unlockAudio]);
 
   // Media Session — lock-screen / earbud / Bluetooth-ring controls
   useEffect(() => {
@@ -282,10 +342,12 @@ export function useTtsQueue(opts?: { mediaSession?: boolean }) {
     currentItemIdx,
     stepIdx,
     speaking,
+    playbackBlocked,
     rate,
     setRate,
     addItem,
     speakNow,
+    unlockAudio,
     next,
     prev,
     replay,

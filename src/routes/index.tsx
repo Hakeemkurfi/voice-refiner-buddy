@@ -69,6 +69,7 @@ function Index() {
     replay: replayTts,
     stop: stopTts,
     pauseResume: pauseResumeTts,
+    unlockAudio: unlockTtsAudio,
   } = tts;
   const analyze = useServerFn(analyzeImage);
   const [realtimeOnline, setRealtimeOnline] = useState(false);
@@ -213,7 +214,7 @@ function Index() {
           ? `${out.modelUsed} • ${out.framesUsed} frames`
           : out.modelUsed ?? "",
       );
-      setStatus("Answer ready. Reading the solution now.");
+      setStatus("Answer ready. Starting the voice now.");
     } catch (e) {
       const message = (e as Error).message;
       setError(message);
@@ -418,26 +419,27 @@ function Index() {
     };
   }, [toggleStopResume, playNext, playPrev, lastImage, handleCapture, replayTts]);
 
-  const unlockAudio = () => {
-    if (typeof window === "undefined") return;
-    try {
-      const a = new Audio(
-        "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=",
-      );
-      a.volume = 0.01;
-      a.play().catch(() => {});
-    } catch { /* ignore */ }
-    try {
-      if ("speechSynthesis" in window) {
-        const u = new SpeechSynthesisUtterance(" ");
-        u.volume = 0.01;
-        window.speechSynthesis.speak(u);
-      }
-    } catch { /* ignore */ }
+  const prepareAudio = useCallback(async () => {
+    const ready = await unlockTtsAudio();
+    if (ready) setAudioUnlocked(true);
+    return ready;
+  }, [unlockTtsAudio]);
+
+  const unlockAudio = async () => {
+    const ready = await prepareAudio();
+    if (!ready) {
+      setStatus("Your phone blocked the voice. Tap Enable once more, then use Play answer if needed.");
+      return;
+    }
     tts.speakNow("Audio is ready. I will speak when a picture arrives.");
-    setAudioUnlocked(true);
-    setStatus("Audio is enabled. The voice will keep playing even if your phone screen locks.");
+    setStatus("Audio is enabled. Photo answers will start speaking automatically, even after the screen locks.");
   };
+
+  useEffect(() => {
+    if (tts.playbackBlocked) {
+      setStatus("Your answer is ready. Tap Play answer below to start the voice.");
+    }
+  }, [tts.playbackBlocked]);
 
   const loadGuideFile = async (file: File | null) => {
     if (!file) return;
@@ -841,7 +843,10 @@ function Index() {
             Speak the answer on my Pi earbuds (phone stays silent)
           </label>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <label className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent">
+            <label
+              className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent"
+              onClick={() => { void prepareAudio(); }}
+            >
               <Camera className="h-4 w-4" />
               Take photo
               <input
@@ -856,7 +861,10 @@ function Index() {
                 }}
               />
             </label>
-            <label className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent">
+            <label
+              className="flex items-center justify-center gap-2 rounded-md border bg-background px-3 py-2 text-sm font-medium cursor-pointer hover:bg-accent"
+              onClick={() => { void prepareAudio(); }}
+            >
               <Layers className="h-4 w-4" />
               Upload from gallery
               <input
@@ -872,7 +880,8 @@ function Index() {
             </label>
           </div>
           <p className="text-[10px] text-muted-foreground mt-2">
-            Auto-resized to ~1600 px JPEG. The AI reads the image, solves the problem, and speaks the answer.
+            The full solution uses your usual numbered lines and exact repeats. Voice starts automatically when ready;
+            if your phone blocks it, use Play answer below.
           </p>
         </Card>
 
@@ -1179,6 +1188,13 @@ function Index() {
               )}
             </div>
           </div>
+
+          {tts.playbackBlocked && currentItem && (
+            <Button className="w-full mt-4 gap-2" onClick={tts.replay}>
+              <Volume2 className="h-4 w-4" />
+              Play answer
+            </Button>
+          )}
 
           <div className="flex items-center justify-center gap-2 mt-4">
             <Button variant="outline" size="icon" onClick={tts.prev} disabled={!currentItem}>
